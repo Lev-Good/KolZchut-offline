@@ -3,7 +3,7 @@
 ## 2026-10-11 — בדיקת גישה מענן (probe) + תכניות VPS
 
 ### מטרה
-לבדוק בהרצה אמיתית אם אפשר להריץ סנכרון יומי ב-GitHub Actions, ללא מחבשת המשתמש.
+לבדוק בהרצה אמיתית אם אפשר להריץ סנכרון יומי ב-GitHub Actions, ללא מחשב המשתמש.
 
 ### בוצע
 - workflow ניסיוני `.github/workflows/cloud-probe.yml` (הרצה ידנית בלבד).
@@ -12,7 +12,7 @@
 - נכתב `docs/VPS_DEPLOYMENT.md` — סקר ספקים📳 
   (JetServer ישראל, Vultr תל-אביב, OVH, Hetzner, Oracle free…), עלויות ותנאים.
 - מוסדר: הרצת Release בענן ממשיכה לעבוד מהארכיון בריפו (ללא פנייה לכל-זכות).
-- README עודכן לפי המציאות: סנכרון sitemap-based ממחבשת מקומית/VPS; לא RecentChanges API.
+- README עודכן לפי המציאות: סנכרון sitemap-based ממחשב מקומי/VPS; לא RecentChanges API.
 
 ### ראיות
 ```
