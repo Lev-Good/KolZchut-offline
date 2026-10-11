@@ -1,5 +1,12 @@
 # Tasks
 
+## הושלם
+
+- [x] סנכרון delta מבוסס sitemap + אימות מחיקות בפועל (sitemap false-positives)
+- [x] Backfill lastmod לאינדקס (7,348 דפים)
+- [x] תיקון URL_SAFE ב-kolzchut_download.py
+- [x] בדיקת e2e דף עודכן נורד מה-article URL המותר
+
 ## בביצוע
 
 - [ ] כתיבת סקריפט הורדה (Python) — טקסט וקישורים בלבד, ללא תמונות

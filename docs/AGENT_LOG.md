@@ -1,5 +1,29 @@
 # יומן עבודה
 
+## 2026-10-11 — תיקון מנגנון הסנכרונון (sitemap + אימות מחיקות)
+
+### מטרה
+לתקן את סנכרון ה-delta כך שיעבוד על דפים אמיתיים בלי false-changed / false-deleted.
+
+### בוצע
+- נמצא שה-API (api.php) מוגדר Disallow ב-robots.txt — לא משתמשים בו לשינויים.
+- sitemap NS0 (מותר) => 7,348 דפים, עם lastmod לכל עמוד.
+- נמצא: sitemap משמיט 10 דפים שקיימים באתר (HEAD חוזר 200) — לכן אימות מחיקות בפועל בקוד.
+- kolzchut_sync_delta.py מתוקן: backfill lastmod, אימות HEAD למחיקות, false-positives leave.
+- kolzchut_download.py: URL_SAFE משותף (היה כולל bug).
+
+### בדיקות
+- backfill: 7,348 עדכונים שמו lastmod.
+- dry-run: changed=0 (במקום 7,348 שלפני התיקון), deleted=10 → אומת ומדוק (0 deleted).
+- delta-sync e2e: דף "איסור הוצאה לחופשה..." שה-lastmod שלו רוסן ידנית ל-2024 → זוהה changed, הורד מה-article URL המותר, נשמר status ok + lastmod חדש (2026-08-16).
+- סנכרון חוזר (run ריק): 0 changed / 0 deleted / cursor מתקדם רק בהצלחה.
+
+### סטטוס
+הושלם — מנגנון הסנכרון האוטומטי עובד על נתיב ה-article URL המותר.
+
+### הערות
+- GitHub Actions נחסם מהיקי (מ-IP של GitHub) — מבוצע מקומי באמצעות kolzchut_local_sync.py.
+
 ## 2026-10-11 — הקמת פרויקט והתשתית
 
 ### מטרה

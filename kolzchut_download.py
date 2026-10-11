@@ -26,8 +26,11 @@ import requests
 from bs4 import BeautifulSoup
 
 API = "https://www.kolzchut.org.il/w/he/api.php"
+SITE = "https://www.kolzchut.org.il"
+SITEMAP_URL = SITE + "/sitemap/sitemap-kz_he-NS_0-0.xml.gz"
 USER_AGENT = "KolZchutOfflineArchive/1.0 (personal non-commercial use; CC-BY-NC-SA-2.5-IL)"
-REQUEST_DELAY = 0.15          # seconds between requests (be polite to the server)
+REQUEST_DELAY = 0.15          # polite default for API calls
+SITEMAP_DELAY = 5.0           # robots.txt Crawl-delay: 5s for crawler endpoints
 MAX_RETRIES = 4
 SEEK_DIR = Path("kolzchut_out")
 
@@ -80,10 +83,70 @@ def fetch_page_html(title: str):
     return None
 
 
+# ------------------------------------------------------------------- sitemap (robots-allowed)
+
+def fetch_sitemap_pages():
+    """Fetch the NS0 Hebrew sitemap and return {title: lastmod_iso}.
+
+    Downstream callers treat lastmod as 'modification timestamp of the page
+    as declared by the site itself', and compare it against it's stored value
+    to detect new / changed / deleted pages.
+    """
+    import gzip
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = session.get(SITEMAP_URL, timeout=120)
+            resp.raise_for_status()
+            time.sleep(SITEMAP_DELAY)
+            data = gzip.decompress(resp.content).decode("utf-8", errors="replace")
+            urls = re.findall(r"<loc>(.*?)</loc>", data)
+            lastmods = re.findall(r"<lastmod>(.*?)</lastmod>", data)
+            pages = {}
+            for url, lm in zip(urls, lastmods):
+                path = url[len(SITE) + len("/he/"):]
+                title = urllib.parse.unquote(path).replace("_", " ")
+                pages[title] = lm
+            return pages
+        except (requests.RequestException, OSError, ValueError) as exc:
+            wait = 2 ** attempt * SITEMAP_DELAY
+            print(f"  ! sitemap error (attempt {attempt}/{MAX_RETRIES}): {exc} - retrying in {wait:.0f}s", file=sys.stderr)
+            time.sleep(wait)
+    raise RuntimeError(f"sitemap fetch failed after {MAX_RETRIES} retries")
+
+
+
+def fetch_article_html(title: str):
+    """Fetch a page through the public article URL (robots-allowed, edge-cached).
+
+    Returns the inner HTML of div.mw-parser-output, or None when not found.
+    Honors the 5 second Crawl-delay via SITEMAP_DELAY.
+    """
+    url = f"{SITE}/he/{urllib.parse.quote(title.replace(' ', '_'), safe=URL_SAFE)}"
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = session.get(url, timeout=60)
+            time.sleep(SITEMAP_DELAY)  # crawl-delay for *all* article requests
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+            content = soup.select_one("div.mw-parser-output")
+            if content is None:
+                return None
+            return str(content)
+        except requests.RequestException as exc:
+            wait = 2 ** attempt * SITEMAP_DELAY
+            print(f"  ! article fetch error (attempt {attempt}/{MAX_RETRIES}): {exc} - retrying in {wait:.0f}s", file=sys.stderr)
+            time.sleep(wait)
+    raise RuntimeError(f"article fetch failed after {MAX_RETRIES} retries: {title}")
+
+
 # ----------------------------------------------------------------------------- slugs
 
 SLUG_UNSAFE = re.compile(r'[\\/:*?"<>|]')
 MAX_NAME_LEN = 28   # keep total path well under Windows MAX_PATH (260)
+# URL-safe characters used in urllib.parse.quote when building article URLs.
+URL_SAFE = "()=.~!$&'*+,;:@"
 
 def make_filename(title: str) -> str:
     """Readable Hebrew filename, short, filesystem-safe, collision-free."""
