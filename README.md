@@ -70,9 +70,30 @@
 
 ## זרימה יומית מומלצת
 
-### אופציה A — מהמחשב המקומי (המנגנון הנוכחי)
+### אופציה A — מודל מבוזר למעדכנים מורשים (בברירת המחדל)
+כל מעדכן מורשה מריץ מהמחשב המקומי:
 ```bash
-python kolzchut_local_sync.py        # סנכרון דלתא → סינון → פורטל → push → workflow run
+python kolzchut_local_sync.py        → kolzchut_contribute.py (branch + PR + CI auto-merge)
+```
+זרימת PR:
+1. סנכרון דלתא מקומי (sitemap-based, מכבד Crawl-delay) + סינון תוכן + בניית פורטל
+2. בדיקת תקינות מקומית (kolzchut_verify.py) — אם נכשל, לא נוצר PR
+3. קומיט לענף `sync/auto-update-<date>-<id>` (מהענף master הטרי)
+4. PR עם label `auto-merge-candidate`
+5. CI (`pr-check.yml`) מבצע בדיקות תקינות בענן:
+   - אינדקס + שלמות דפים
+   - קישורים פנימיים (פחות מ-2% שבורים)
+   - תפוקת סינון תכנים (בדיקת HTML)
+   - חריגה של מחיקות (יותר מ-1% של הארכיון שנמחק ב-PR יחיד — חוסם)
+   - כשל סנכרון (delta.json counts.failed > 0 — חוסם)
+6. CI עובר → `auto-merge.yml` ממזג אוטומטית ומפעיל Build Release
+7. CI נכשל → ה-PR נשאר, מופק דוח שגיאות על ה-PR, והגרסה הקיימת באוויר
+
+**הגנת master:** ענף master מוגן — אין לאף אחד דחיפה ישירה; כל עדכון דרך PR + בדיקות CI.
+
+### אופציה B — מצב ישיר ישן (ישן, לא מומלץ)
+```bash
+python kolzchut_local_sync.py --direct   # legacy flow; bypasses PR/CI
 ```
 ניתן לשלב ב־cron / Windows Task Scheduler פעם ביום.
 

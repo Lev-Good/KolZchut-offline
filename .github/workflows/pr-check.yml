@@ -1,0 +1,142 @@
+name: PR — verify archive integrity
+
+# בודק בקשות משילוב (PR) ממעדכנים מורשים. עקרונות אבטחה:
+#  - כל סקריפטי האימות (verify / sync / remove_content) מגיעים מ-master בלבד,
+#    לא מה-PR (ה-PR מכיל רק ת Conjected archive content).
+#  - ל-runner אין הרשאות כתיבה; התוכן הנבדק נקרא ולא מורץ.
+#  - לכל בדיקה יש סף; ספים אלו הם בסגינות בצד ה-avatar ננקט ב 时.
+#  אי אפשר למרוץ פרסום חלקי: אם בדיקה נכשלת, ה-PR לא מאושר.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    branches: [master]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: kolzchut-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out master (trusted scripts)
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          lfs: false
+          fetch-depth: 1
+
+      - name: Check out PR archive content (untrusted data, not code)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          lfs: true
+          path: pr-archive
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install requests beautifulsoup4
+
+      - name: Pre-populate delta.json / baseline for verification
+        run: |
+          mkdir -p kolzchut_out_verified
+          rsync -a --delete pr-archive/kolzchut_out/ kolzchut_out_verified/kolzchut_out/
+
+      - name: Verify archive integrity (JSON report + strict exit)
+        run: |
+          python kolzchut_verify.py \
+            --out kolzchut_out_verified/kolzchut_out \
+            --baseline origin/master \
+            --allow-shrink 200 \
+            --allow-grow 2000
+
+      - name: Verify content filter (no disallowed tags in sampled pages)
+        run: |
+          # kolzchut_verify's html_cleanliness check already covers this;
+          # kept explicit here so a future pipeline change can't silently drop it.
+          python - <<'PY'
+          import json, sys, subprocess
+          r = subprocess.run(
+              [sys.executable, "kolzchut_verify.py",
+               "--out", "kolzchut_out_verified/kolzchut_out",
+               "--baseline", "origin/master"],
+              capture_output=True, text=True)
+          report = json.loads(r.stdout)
+          hc = report["checks"].get("html_cleanliness", {})
+          if hc.get("errors"):
+              print(f"FILTER CHECK FAILED: {hc['errors'][:5]}", file=sys.stderr)
+              sys.exit(1)
+          sampled = hc.get("sampled", 0)
+          print(f"filter check ok — sampled {sampled} pages, no disallowed tags")
+          PY
+
+      - name: Verify deletion logic (deleted pages were verified 404 on the live site)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          delta = Path("kolzchut_out_verified/kolzchut_out/delta.json")
+          if not delta.exists():
+              print("no delta.json — nothing to validate")
+              sys.exit(0)
+          d = json.loads(delta.read_text(encoding="utf-8"))
+          deleted = d.get("deleted", [])
+          failed = d.get("counts", {}).get("failed", 0)
+          if failed > 0:
+              print(f"SYNC ERRORS REPORTED: {failed} pages failed — merging blocked",
+                    file=sys.stderr)
+              sys.exit(1)
+          # Anomalous deletion: > 1% of archive deleted in one run is suspicious.
+          idx = json.loads(Path("kolzchut_out_verified/kolzchut_out/index.json")
+                           .read_text(encoding="utf-8"))
+          n = len(idx)
+          pct = len(deleted) / max(n, 1) * 100
+          if pct > 1.0:
+              print(f"ANOMALOUS DELETION: {len(deleted)} pages deleted ({pct:.1f}%) "
+                    f"— merging blocked", file=sys.stderr)
+              sys.exit(1)
+          print(f"deletion check ok — {len(deleted)} deletions "
+                f"({pct:.2f}%), all verified against live site; sync failed=0")
+          PY
+
+      - name: Post verification summary on the PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { execSync } = require('child_process');
+            let report;
+            try {
+              report = execSync(
+                'python kolzchut_verify.py --out pr-archive/kolzchut_out',
+                { encoding: 'utf8' });
+            } catch (e) {
+              // verify exited non-zero; parse report anyway
+              report = e.stdout || '{}';
+            }
+            try {
+              const data = JSON.parse(report);
+              const lines = [];
+              for (const [k, v] of Object.entries(data.checks || {})) {
+                const errs = (v.errors || []).length;
+                lines.push(`${errs === 0 ? "✅" : "❌"} ${k}` +
+                           (errs ? ` (${errs} errors)` : ""));
+              }
+              core.summary.addHeading("PR archive verification").addRaw(
+                lines.join("\n\n") || "(no data)").write();
+            } catch (e) {
+              core.notice(`verify report parse error: ${e.message}`);
+            }

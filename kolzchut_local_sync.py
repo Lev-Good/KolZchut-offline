@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-סנקרון מקומי מהמחשב הביתי — הריצה היומית שמחליפה את GitHub Actions.
+Local machine sync — daily run supporting the DISTRIBUTED (contributor-PR) model.
 
-רצף:
-  1. kolzchut_sync_delta.py  — מוריד רק דפים שהשתנו מאז last_sync.txt
-  2. kolzchut_remove_content.py --default-charedi-list  — סינון תכנים
+⚠️  מיושן בגרסתו הקודמת (דחיפה ישירה ל-master) — עכשיו ברירת המחדל יוצרת branch
+   + PR, ו-CI מחליט האם לאחד ולפרסם (kolzchut_contribute.py). הפצה ישירה נשארת
+   זמינה דרך  kolzchut_local_sync.py --direct  (לא מומלץ יותר).
+
+New flow (recommended):
+  python kolzchut_local_sync.py           → defers to kolzchut_contribute.py
+
+Legacy direct mode (kept for backward compatibility, bypasses PR/CI):
+  python kolzchut_local_sync.py --direct
+
+Legacy direct flow:
+  1. kolzchut_sync_delta.py  — only changed pages since last_sync.txt
+  2. kolzchut_remove_content.py --default-charedi-list  — content filter
   3. kolzchut_build_portal.py --github-repo Lev-Good/KolZchut-offline
-  4. קומיט + push של kolzchut_out לגיט (דרך LFS)
-  5. gh workflow run "Build release from committed archive"  — מפרסם ZIP חדש
-
-הרצה:  python kolzchut_local_sync.py           (רץ רק אם יש שינויים)
-        python kolzchut_local_sync.py --force   (רץ בכל מקרה)
+  4. commit + push kolzchut_out via git (through LFS)
+  5. gh workflow run "Build release from committed archive"  — publish new ZIP
 """
 
 import argparse
@@ -35,12 +42,22 @@ def run(cmd, **kw):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--force", action="store_true", help="sync+release even with no changes")
+    parser.add_argument("--force", action="store_true", help="sync even with no changes")
+    parser.add_argument("--direct", action="store_true",
+                        help="legacy flow: direct push + release (bypasses PR/CI)")
     args = parser.parse_args()
 
     t0 = time.time()
 
-    # 1) delta sync
+    if not args.direct:
+        # Recommended path: defer to the distributed (branch + PR) flow.
+        fwd = [sys.executable, "kolzchut_contribute.py"]
+        if args.force:
+            fwd.append("--force")
+        run(fwd)
+        return
+
+    # 1) delta sync (legacy direct mode)
     run([sys.executable, "kolzchut_sync_delta.py"])
 
     changed = 0
