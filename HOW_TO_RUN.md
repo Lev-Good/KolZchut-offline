@@ -58,6 +58,17 @@ python kolzchut_remove_content.py --blank-pages "שם דף"
 python kolzchut_remove_content.py --remove-words "מילה"
 ```
 
+## בדיקת השער מקומית
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+[tests/test_archive_gate.py](tests/test_archive_gate.py) מריץ את הקוד האמיתי של השער:
+אכיפת המסנן, מחיקות וכשלי סנכרון, שינוי חריג בגודל מול baseline, baseline לא-קריא
+כשגיאה קשה, ואינווריאנטים של אמון. אותה חבילה רצה בכל PR וגם על master —
+הרצה מקומית לפני דחיפה חוסכת סבב CI.
+
 ## פרסום Release
 
 בניית ה-Release רצה בענן מתוך `kolzchut_out/` שנמצא כבר בריפו (LFS) — בלי לפנות
@@ -87,3 +98,4 @@ gh release create v20261011 releases/kolzchut_v20261011.zip \
 | ה-PR נפתח אבל לא ממוזג | קראו את הסיכום ב-Actions (job summary) ואת תגובת ה-bot ב-PR |
 | "auto-merge skipped by design" | ה-PR נוגע בקבצי תשתית (לא רק תוכן) — נדרש מיזוג אנושי |
 | ריצה יבשה | `python kolzchut_contribute.py --check` |
+| רוצים לבדוק את השער לפני דחיפה | `python -m unittest discover -s tests -v` |

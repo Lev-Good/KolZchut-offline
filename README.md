@@ -55,6 +55,9 @@
 | `kolzchut_local_sync.py` | ריצת־על יומית: סנכרון → סינון → פורטל → push → trigger Release |
 | `.github/workflows/daily-sync.yml` | בניית ZIP/Release מהארכיון הקיים בריפו (ללא גישה לאתר) |
 | `.github/workflows/cloud-probe.yml` | בדיקת גישה ענן (ריצה ידנית؛ הראתה 403 מ-runners) |
+| `.github/workflows/gate-tests.yml` | הרצת חבילת הרגרסיה על master אחרי מיזוג שינוי תשתית |
+| `kolzchut_verify.py` | אימות תקינות הארכיון (אינדקס, שלמות, קישורים, מחיקות, שינוי גודל) |
+| `tests/test_archive_gate.py` | חבילת רגרסיה לשער — מריצה את הקוד האמיתי של השער |
 
 ---
 
@@ -108,6 +111,17 @@ gh workflow run "Build release from committed archive"
 ה-workflow מבוסס רק על `kolzchut_out/` שהועלה כבר לריפו (LFS) — לא פונה לכל-זכות.
 
 ---
+
+## בדיקות (שער הארכיון)
+
+```bash
+python -m unittest discover -s tests -v     # 27 בדיקות, ~10 שניות
+```
+
+החבילה מריצה את **הקוד האמיתי**: סקריפטים מהריפו, והבלוקים שמוטמעים ב-workflows
+נחלצים מהקובץ עצמו (לא העתקה) — כך שגם שינוי שמסיר הגנה מפיל בדיקה.
+היא רצה בכל PR (`pr-check`), ובנפרד על master (`gate-tests.yml`) אחרי מיזוג
+שינוי תשתית — שם גם קוד השער נלקח מ-master עצמו.
 
 ## בדיקת גרסה מהדפדפן
 

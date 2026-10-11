@@ -78,6 +78,36 @@ jobs:
           rsync -a --delete pr-archive/kolzchut_out/ kolzchut_out/
           echo "staged pages: $(ls kolzchut_out/pages | wc -l)"
 
+      - name: Gate regression suite (base-branch tests against base-branch code)
+        run: |
+          # Runs the real gate code: the base branch's scripts plus the Python
+          # blocks extracted from these workflows. It asserts the content-filter
+          # gate, the deletion/sync-failure gate, the size gate, "an unreadable
+          # baseline is a hard error", the trust invariants, and that the suite
+          # itself cannot lose a test silently.
+          #
+          # Placement matters: staging already happened, so the repository check
+          # sees real content instead of an unmaterialized Git LFS pointer.
+          #
+          # Bootstrap note: a master that predates this suite has no tests/ and
+          # that is not a failure. Once the suite is on master, collecting zero
+          # tests FAILS, so this step cannot quietly stop checking anything.
+          if [ ! -d tests ]; then
+            echo "no tests/ on the base branch (suite not merged yet) — skipping"
+            exit 0
+          fi
+          # The exit status is handled explicitly instead of relying on the
+          # runner's implicit `bash -e`: `tee` exits 0 even when the suite fails,
+          # so an implicit-status version would report a green gate for a red
+          # suite (and `set -e` would abort before the diagnostics below).
+          set -o pipefail
+          status=0
+          python -m unittest discover -s tests -v 2>&1 | tee /tmp/gate-tests.log \
+            || status=$?
+          grep -Eq "Ran [1-9][0-9]* tests?" /tmp/gate-tests.log \
+            || { echo "::error::the gate suite collected zero tests"; exit 1; }
+          exit "$status"
+
       - name: Verify archive integrity (trusted verifier + master baseline)
         run: |
           # Script from master, content from the PR, size baseline from master.

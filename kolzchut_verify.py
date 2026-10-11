@@ -5,7 +5,8 @@ Integrity verifier for the KolZchut offline archive.
 
 Runs the same checks in CI (on a contributor's Pull Request) and locally.
 Exit code 0 = clean archive, 1 = failures found. Produces a machine-readable
-report on stdout (JSON) plus a human-readable summary on stderr.
+report on stdout (JSON only — every warning goes to stderr) plus a
+human-readable summary on stderr. Callers can json.loads(stdout) directly.
 
 Checks:
   1. index.json parses and every entry has string slug + known status
@@ -225,7 +226,8 @@ def get_baseline_index(baseline: str | None, baseline_index: str | None = None):
         try:
             return json.loads(Path(baseline_index).read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
-            print(f"warning: --baseline-index {baseline_index} unreadable: {exc}")
+            print(f"warning: --baseline-index {baseline_index} unreadable: {exc}",
+                  file=sys.stderr)
             return None
     if not baseline:
         return None
@@ -234,13 +236,13 @@ def get_baseline_index(baseline: str | None, baseline_index: str | None = None):
                              capture_output=True, text=True, check=True).stdout
     except subprocess.CalledProcessError:
         print(f"warning: baseline {baseline} has no index.json; "
-              f"anomalous-diff check skipped")
+              f"anomalous-diff check skipped", file=sys.stderr)
         return None
     try:
         return json.loads(smudge_lfs(raw))
     except ValueError as exc:
         print(f"warning: baseline index unparsable: {exc}; "
-              f"anomalous-diff check skipped")
+              f"anomalous-diff check skipped", file=sys.stderr)
         return None
 
 

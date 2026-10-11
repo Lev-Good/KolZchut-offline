@@ -207,3 +207,42 @@ kolzchut_sync_delta.py, kolzchut_release.py, kolzchut_remove_content.py, .github
 
 ### סטטוס
 חלקי — ממתין לריצת CI ירוקה ולמיזוג אנושי (PR תשתית).
+
+## 2026-10-12 — חבילת רגרסיה קבועה לשער + חיווט ל-CI
+
+### מטרה
+שהשער (סינון, מחיקות, שינוי גודל, baseline לא-קריא, אינווריאנטים של אמון) לא יישבר
+בשקט ע"י שינוי עתידי — במקום בדיקות ידניות חד-פעמיות, חבילה קבועה בפרויקט.
+
+### בוצע
+- `tests/test_archive_gate.py` (חדש) — 27 בדיקות שמריצות את הקוד האמיתי.
+- `pr-check.yml`: שלב חדש שמריץ את החבילה **אחרי** staging (כדי שבדיקת הארכיון
+  תראה תוכן אמיתי ולא מצביע LFS), עם שער "אפס בדיקות אינו ירוק".
+- `.github/workflows/gate-tests.yml` (חדש): אותה חבילה על `push` ל-master, שם קוד
+  השער נלקח מ-master עצמו. ב-PR אין נקודה כזו: ה-workflow מגיע מה-PR והבדיקות
+  רצות מול סקריפטי ה-BASE.
+- אכיפת מלאי: `EXPECTED_GATE_TESTS` + בדיקת ספירה — מחיקת הבדיקה שתפסה בעיה
+  נתפסת בעצמה.
+- תיעוד: README, HOW_TO_RUN, docs/DISTRIBUTED_UPDATES, docs/DECISIONS, docs/TASKS.
+
+### קבצים שהושפעו
+- `tests/test_archive_gate.py`, `.github/workflows/pr-check.yml`,
+  `.github/workflows/gate-tests.yml`, `kolzchut_verify.py` (אזהרות ל-stderr),
+  `README.md`, `HOW_TO_RUN.md`, `docs/*`
+
+### בדיקות
+- החבילה: 27/27 עוברות מקומית, ~9 שניות (כולל אימות הארכיון האמיתי — 7,358 דפים).
+- בדיקת מוטציות על עותק של העץ (7 מוטציות): כולן הפילו בדיקה בשם מפורש —
+  verifier מה-PR, `pip install -r requirements.txt`, ניטרול שער הסינון, השתקת כשל
+  baseline, הסרת `actions: write`, הסרת הגנת התוכן-בלבד, חזרה ל-polling.
+- `yaml.safe_load` + `bash -n` לכל בלוק shell + `compile()` לכל בלוק Python מוטמע,
+  בכל 5 ה-workflows — 0 כשלים.
+
+### בעיות שנמצאו
+- אזהרות ה-baseline נכתבו ל-stdout וזיהמו את דוח ה-JSON של `kolzchut_verify.py`.
+  תוקן ל-stderr, ונוספה בדיקה מפורשת בחבילה (`test_stdout_stays_pure_json...`).
+
+### סטטוס
+הושלם מקומית. החבילה טרם רצה ב-CI: עד המיזוג אין `tests/` ב-master, ולכן שלב
+ה-CI מדלג במפורש ("bootstrap") — ההרצה הראשונה תהיה ב-PR התוכן הבא.
+
