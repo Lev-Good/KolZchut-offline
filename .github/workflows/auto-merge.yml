@@ -103,8 +103,10 @@ jobs:
             echo "merge conflict -> NOT merging PR $PR"
             exit 1
           fi
+          # NOTE: --auto requires 'Allow auto-merge' in repo settings; skip that
+          # flag and merge directly once checks are verified green above.
           gh pr merge "$PR" --repo "${{ github.repository }}" --squash \
-             --delete-branch --auto --subject "Auto-merged archive update"
+             --delete-branch --subject "Auto-merged archive update"
           echo "merged PR $PR"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
