@@ -1,0 +1,6 @@
+# הארכיון עצמו לא עולה ל-Git (הוא מתפרסם ב-Release ZIP)
+kolzchut_out/
+releases/
+__pycache__/
+*.pyc
+.DS_Store

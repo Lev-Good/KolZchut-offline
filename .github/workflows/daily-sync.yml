@@ -1,0 +1,80 @@
+name: Daily KolZchut sync + release
+
+on:
+  schedule:
+    - cron: "0 4 * * *"      # 04:00 UTC = 06:00 Israel time
+  workflow_dispatch: {}       # manual trigger button
+
+permissions:
+  contents: write             # needed to create releases
+
+jobs:
+  sync-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Restore archive state (index + pages cache)
+        uses: actions/cache@v4
+        with:
+          path: kolzchut_out
+          key: kolzchut-archive-${{ github.run_id }}
+          restore-keys: |
+            kolzchut-archive-
+
+      - name: First full download if archive missing
+        id: bootstrap
+        run: |
+          if [ ! -f kolzchut_out/index.json ]; then
+            echo "No archive - running FULL download"
+            python kolzchut_download.py
+          else
+            echo "Archive present - running DELTA sync"
+            python kolzchut_sync_delta.py
+          fi
+
+      - name: Build portal
+        if: always()
+        run: python kolzchut_build_portal.py
+
+      - name: Build release ZIP + manifest
+        id: release
+        run: |
+          python kolzchut_release.py
+          DATE=$(date -u +%Y%m%d)
+          CHANGED=$(python -c "
+          import json,pathlib
+          d=pathlib.Path('kolzchut_out/delta.json')
+          n=0
+          if d.exists():
+              n=json.loads(d.read_text(encoding='utf-8')).get('counts',{}).get('changed',0)
+          print('1' if n else '0')
+          ")
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        if: steps.release.outputs.changed == '1'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.release.outputs.date }}
+          files: releases/kolzchut_*.zip
+          body: |
+            עדכון יומי של ארכיון כל זכות האופלייני.
+            - דפים שהתעדכנו: ראו delta.json בתוך ה-ZIP
+            - הורידו, פתחו, והחליפו את התיקייה הקיימת
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
