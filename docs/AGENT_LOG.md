@@ -235,8 +235,12 @@ kolzchut_sync_delta.py, kolzchut_release.py, kolzchut_remove_content.py, .github
 - בדיקת מוטציות על עותק של העץ (7 מוטציות): כולן הפילו בדיקה בשם מפורש —
   verifier מה-PR, `pip install -r requirements.txt`, ניטרול שער הסינון, השתקת כשל
   baseline, הסרת `actions: write`, הסרת הגנת התוכן-בלבד, חזרה ל-polling.
-- `yaml.safe_load` + `bash -n` לכל בלוק shell + `compile()` לכל בלוק Python מוטמע,
+- `yaml.safe_load` + `bash -n` לכל בלוק shell + `compile()` לכל בלוק Python מוטעמע,
   בכל 5 ה-workflows — 0 כשלים.
+- שלב ה-CI הורץ **בפועל** ב-CI האמיתי (run 38179028636, commit 884ca3a): הוא רץ
+  ודילג במפורש ("no tests/ on the base branch … skipping") כי master שלפני המיזוג
+  אינו מכיל `tests/`; שאר השער עבר — `VERIFY OK` · `baseline pages: 7358` ·
+  `content filter is a no-op on all 7358 pages` · `deletion check ok`.
 
 ### בעיות שנמצאו
 - אזהרות ה-baseline נכתבו ל-stdout וזיהמו את דוח ה-JSON של `kolzchut_verify.py`.
