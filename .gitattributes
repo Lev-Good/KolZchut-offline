@@ -1,1 +1,2 @@
 kolzchut_out/** filter=lfs diff=lfs merge=lfs -text
+kolzchut_out/pages/** filter=lfs diff=lfs merge=lfs -text

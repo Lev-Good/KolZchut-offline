@@ -34,7 +34,11 @@ LABEL_CANDIDATE = "auto-merge-candidate"
 
 def run(cmd, **kw):
     print(f"$ {' '.join(cmd) if isinstance(cmd, list) else cmd}")
-    r = subprocess.run(cmd, shell=isinstance(cmd, str), **kw)
+    if isinstance(cmd, str):
+        kw.pop("shell", None)
+        r = subprocess.run(cmd, shell=True, **kw)
+    else:
+        r = subprocess.run(cmd, **kw)
     if r.returncode != 0:
         raise SystemExit(f"Command failed (exit {r.returncode}): {cmd}")
 
