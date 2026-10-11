@@ -215,7 +215,7 @@ kolzchut_sync_delta.py, kolzchut_release.py, kolzchut_remove_content.py, .github
 בשקט ע"י שינוי עתידי — במקום בדיקות ידניות חד-פעמיות, חבילה קבועה בפרויקט.
 
 ### בוצע
-- `tests/test_archive_gate.py` (חדש) — 27 בדיקות שמריצות את הקוד האמיתי.
+- `tests/test_archive_gate.py` (חדש) — 30 בדיקות שמריצות את הקוד האמיתי.
 - `pr-check.yml`: שלב חדש שמריץ את החבילה **אחרי** staging (כדי שבדיקת הארכיון
   תראה תוכן אמיתי ולא מצביע LFS), עם שער "אפס בדיקות אינו ירוק".
 - `.github/workflows/gate-tests.yml` (חדש): אותה חבילה על `push` ל-master, שם קוד
@@ -231,11 +231,16 @@ kolzchut_sync_delta.py, kolzchut_release.py, kolzchut_remove_content.py, .github
   `README.md`, `HOW_TO_RUN.md`, `docs/*`
 
 ### בדיקות
-- החבילה: 27/27 עוברות מקומית, ~9 שניות (כולל אימות הארכיון האמיתי — 7,358 דפים).
-- בדיקת מוטציות על עותק של העץ (7 מוטציות): כולן הפילו בדיקה בשם מפורש —
-  verifier מה-PR, `pip install -r requirements.txt`, ניטרול שער הסינון, השתקת כשל
-  baseline, הסרת `actions: write`, הסרת הגנת התוכן-בלבד, חזרה ל-polling.
-- `yaml.safe_load` + `bash -n` לכל בלוק shell + `compile()` לכל בלוק Python מוטעמע,
+- החבילה: 30/30 עוברות מקומית, ~15 שניות (כולל אימות הארכיון האמיתי — 7,358 דפים).
+- בדיקת מוטציות על עותק של העץ (11 מוטציות) — כולן הפילו בדיקה בשם מפורש:
+  verifier מה-PR · `pip install -r requirements.txt` · ניטרול שער הסינון · השתקת
+  כשל baseline · הסרת `actions: write` · הסרת הגנת התוכן-בלבד · חזרה ל-polling ·
+  המרת `exit "$status"` ל-`exit 0` · הסרת שער "אפס בדיקות" · מחיקת שלב הרצת
+  החבילה מ-pr-check · שינוי הטריגר של `gate-tests.yml`.
+- שלב ה-CI הורץ ישירות (חילוץ מה-YAML) ב-4 תרחישים: ארכיון אמיתי → exit 0;
+  master בלי `tests/` → דילוג; אפס בדיקות → exit 1; בדיקה נכשלת → exit 1
+  (כלומר `tee` אינו בולע כשל).
+- `yaml.safe_load` + `bash -n` לכל בלוק shell + `compile()` לכל בלוק Python מוטמע,
   בכל 5 ה-workflows — 0 כשלים.
 - שלב ה-CI הורץ **בפועל** ב-CI האמיתי (run 38179028636, commit 884ca3a): הוא רץ
   ודילג במפורש ("no tests/ on the base branch … skipping") כי master שלפני המיזוג
@@ -245,6 +250,8 @@ kolzchut_sync_delta.py, kolzchut_release.py, kolzchut_remove_content.py, .github
 ### בעיות שנמצאו
 - אזהרות ה-baseline נכתבו ל-stdout וזיהמו את דוח ה-JSON של `kolzchut_verify.py`.
   תוקן ל-stderr, ונוספה בדיקה מפורשת בחבילה (`test_stdout_stays_pure_json...`).
+- שלב ה-CI הסתמך תחילה על `-e` המשתמע של ה-runner; הוחלף בלכידת סטטוס מפורשת
+  (`status=$?` + `exit "$status"`) כדי שכשל לא ייבלע ע"י `tee`.
 
 ### סטטוס
 הושלם מקומית. החבילה טרם רצה ב-CI: עד המיזוג אין `tests/` ב-master, ולכן שלב

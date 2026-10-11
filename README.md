@@ -115,7 +115,7 @@ gh workflow run "Build release from committed archive"
 ## בדיקות (שער הארכיון)
 
 ```bash
-python -m unittest discover -s tests -v     # 27 בדיקות, ~10 שניות
+python -m unittest discover -s tests -v     # 30 בדיקות, ~15 שניות
 ```
 
 החבילה מריצה את **הקוד האמיתי**: סקריפטים מהריפו, והבלוקים שמוטמעים ב-workflows
