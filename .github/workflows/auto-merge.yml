@@ -1,22 +1,30 @@
 name: Auto-merge verified archive PR
 
-# מסנכרן PRs שסומנו auto-merge-candidate וכל הבדיקות בהם עברו.
-# בהצלחה — מיזוג ל-master + הפעלת Build Release. בכישלון — נותרת
-# גרסת העדכון האחרונה במקומה; מופק דוח שגיאות על ה-PR.
+# ממזג PR תוכן-ארכיון שכל הבדיקות בו עברו, ומפעיל את בניית ה-Release.
+#
+# למה workflow_run ולא polling על status checks: ה-check runs של ה-workflow הזה
+# עצמו מופיעים ב-statusCheckRollup של ה-PR, ולכן "כל הבדיקות ירוקות" לא יכול
+# היה להתקיים אף פעם — המיזוג האוטומטי נתקע (fail + request-changes).
+# כאן ה-workflow מתעורר ברגע ש-workflow הבדיקות מסתיים בהצלחה.
+#
+# הגנת אמון: אוטו-מיזוג חל על *שינויי תוכן בלבד* (kolzchut_out/**, docs/**).
+# PR שנוגע בסקריפטי האימות או ב-workflows לא ממוזג אוטומטית — אחרת אפשר היה
+# להחליף את סקריפט האימות ב-master ולעקוף את כל השער בפעם הבאה.
+#
+# זהו השער הקובע: עבור pull_request רץ קובץ ה-workflow **מה-PR** (בדקתי זאת
+# בפועל — ראו docs/DECISIONS.md), ולכן pr-check.yml לבדו אינו אמין. ה-workflow
+# הזה רץ מ-branch ברירת המחדל דרך workflow_run, ולכן PR אינו יכול לשנות אותו.
 
 on:
-  pull_request:
-    types: [labeled, synchronize]
-    branches: [master]
-  check_suite:
+  workflow_run:
+    workflows: ["PR — verify archive integrity"]
     types: [completed]
   workflow_dispatch: {}
-  status: {}
 
 permissions:
-  contents: write
-  pull-requests: write
-  checks: read
+  actions: write         # gh workflow run — הפעלת בניית ה-Release
+  contents: write        # מיזוג ל-master
+  pull-requests: write   # תגובות ומיזוג PR
 
 concurrency:
   group: kolzchut-auto-merge
@@ -25,114 +33,128 @@ concurrency:
 jobs:
   merge-if-verify-passed:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request != null &&
-       contains(github.event.pull_request.labels.*.name, 'auto-merge-candidate'))
+    timeout-minutes: 20
     steps:
-      - name: Checkout master (trusted scripts only)
-        uses: actions/checkout@v4
-        with:
-          ref: master
-          fetch-depth: 0
-
-      - name: Find qualifying PR
-        id: find_pr
+      - name: Resolve the candidate PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Look up the label; if no PR qualifies, skip silently.
-          PR=$(gh pr list --repo "${{ github.repository }}" \
-                     --label auto-merge-candidate \
-                     --state open \
-                     --json number --jq '.[0].number // ""')
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            CONCLUSION="${{ github.event.workflow_run.conclusion }}"
+            BRANCH="${{ github.event.workflow_run.head_branch }}"
+            if [ "$CONCLUSION" != "success" ]; then
+              echo "verify run concluded '$CONCLUSION' — not merging."
+              exit 0
+            fi
+            PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --label auto-merge-candidate \
+                   --head "$BRANCH" --state open --json number --jq '.[0].number // ""')
+          else
+            PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --label auto-merge-candidate \
+                   --state open --json number --jq '.[0].number // ""')
+          fi
           if [ -z "$PR" ]; then
             echo "No open auto-merge-candidate PR — nothing to do."
             exit 0
           fi
-          echo "pr=$PR" >> "$GITHUB_OUTPUT"
-          # Prefilter: is the latest commit already verified?
-          gh pr view "$PR" --repo "${{ github.repository }}" \
-             --json mergeable,mergeStateStatus,statusCheckRollup \
-             --jq '{mergeable, mergeStateStatus, checks: [.statusCheckRollup[].status]}'
+          echo "number=$PR" >> "$GITHUB_OUTPUT"
+          echo "resolved PR #$PR"
+
+      - name: Confirm the verified commit is still the PR head
+        id: freshness
+        if: steps.pr.outputs.number != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Wait for the PR verify check to be green
-        if: steps.find_pr.outputs.pr != ''
         run: |
-          PR=${{ steps.find_pr.outputs.pr }}
-          for i in $(seq 1 30); do
-            if gh pr view "$PR" --repo "${{ github.repository }}" \
-               --json statusCheckRollup \
-               --jq '[.statusCheckRollup[] | select(.conclusion != null)] | length > 0' \
-               | grep -q "false"; then
-              echo "checks still pending — retry in 20s"
-              sleep 20
-              continue
-            fi
-            if gh pr view "$PR" --repo "${{ github.repository }}" \
-               --json statusCheckRollup \
-               --jq '[.statusCheckRollup[] | select(.conclusion != "SUCCESS")] | length == 0'; then
-              echo "all checks green"
-              exit 0
-            else
-              echo "some checks failing — $PR will NOT be merged automatically"
-              gh pr review "$PR" --repo "${{ github.repository }}" --request-changes \
-                 --body "❌ CI checks failed — auto-merge skipped. See the failing checks for the error report."
-              exit 1
-            fi
-          done
-          echo "timed out waiting for checks — leaving PR open"
-          exit 1
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "workflow_run" ]; then
+            echo "manual dispatch — freshness check skipped"
+            echo "ok=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          PR="${{ steps.pr.outputs.number }}"
+          RUN_SHA="${{ github.event.workflow_run.head_sha }}"
+          PR_SHA=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
+                     --json headRefOid --jq .headRefOid)
+          if [ "$RUN_SHA" != "$PR_SHA" ]; then
+            echo "::notice::verify ran for $RUN_SHA but the PR head is $PR_SHA — waiting for the newer run"
+            exit 0
+          fi
+          echo "ok=1" >> "$GITHUB_OUTPUT"
+
+      - name: Guard — only content-only PRs auto-merge
+        id: guard
+        if: steps.freshness.outputs.ok == '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Merge PR (squash)
-        if: steps.find_pr.outputs.pr != ''
         run: |
-          PR=${{ steps.find_pr.outputs.pr }}
-          # Guard against a master that changed after the PR started:
-          # if the merge state is "dirty" (conflict) fail and report instead of force-merging.
-          MERGE_STATE=$(gh pr view "$PR" --repo "${{ github.repository }}" \
-                          --json mergeStateStatus --jq .mergeStateStatus)
-          if [ "$MERGE_STATE" = "DIRTY" ]; then
-            gh pr comment "$PR" --repo "${{ github.repository }}" \
-               --body "⚠️ master moved since this PR started — merge conflict detected."
-            gh pr review "$PR" --repo "${{ github.repository }}" --request-changes \
-               --body "master moved since sync start — please rebase and resubmit (kolzchut_contribute.py will re-diff from the new master)."
-            echo "merge conflict -> NOT merging PR $PR"
+          set -euo pipefail
+          PR="${{ steps.pr.outputs.number }}"
+          FILES=$(gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" --name-only)
+          OUTSIDE=$(printf '%s\n' "$FILES" | grep -v -E '^(kolzchut_out/|docs/)' || true)
+          if [ -n "$OUTSIDE" ]; then
+            echo "::notice::PR #$PR touches verification/workflow files — auto-merge skipped by design."
+            printf '%s\n' "$OUTSIDE" | head -20
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "ℹ️ אוטו-מיזוג דולג: ה-PR נוגע גם בקבצים שאינם תוכן ארכיון (סקריפטי אימות / workflows / קוד). שינויי תשתית מחייבים מיזוג אנושי — כדי שלא ניתן יהיה להחליף את מנגנון הבדיקה דרך PR. הבדיקות עצמן עברו; המיזוג ממתין לתחזוקן."
+            exit 0
+          fi
+          echo "ok=1" >> "$GITHUB_OUTPUT"
+          echo "PR #$PR is content-only — eligible for auto-merge."
+
+      - name: Merge (squash) unless master moved
+        if: steps.guard.outputs.ok == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PR="${{ steps.pr.outputs.number }}"
+          STATE=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
+                    --json mergeStateStatus --jq .mergeStateStatus)
+          if [ "$STATE" = "DIRTY" ]; then
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "⚠️ master התקדם מאז תחילת הסנכרון — קונפליקט מיזוג. הריצו שוב את kolzchut_contribute.py: הסנכרון ייגזר מחדש מ-master המעודכן. הגרסה המאומתת הקודמת נשארת באוויר."
+            echo "merge conflict -> NOT merging PR #$PR"
             exit 1
           fi
-          # NOTE: --auto requires 'Allow auto-merge' in repo settings; skip that
-          # flag and merge directly once checks are verified green above.
-          gh pr merge "$PR" --repo "${{ github.repository }}" --squash \
-             --delete-branch --subject "Auto-merged archive update"
-          echo "merged PR $PR"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          if ! gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash \
+                 --delete-branch --subject "Auto-merged archive update"; then
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "⚠️ המיזוג האוטומטי נחסם (הענף אינו מעודכן מול master או בדיקה חסרה). הגרסה המאומתת הקודמת נשארת באוויר."
+            exit 1
+          fi
+          echo "merged PR #$PR"
 
-      - name: Trigger the Release workflow (builds a ZIP from the merged master)
-        if: steps.find_pr.outputs.pr != ''
-        run: |
-          sleep 30   # allow time for master to settle
-          gh workflow run "Build release from committed archive" \
-             --repo "${{ github.repository }}" --ref master
+      - name: Trigger the release build
+        if: steps.guard.outputs.ok == '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PR="${{ steps.pr.outputs.number }}"
+          sleep 20   # give master a moment to settle
+          for attempt in 1 2 3; do
+            if gh workflow run "Build release from committed archive" \
+                 --repo "$GITHUB_REPOSITORY" --ref master; then
+              echo "release build dispatched"
+              exit 0
+            fi
+            echo "dispatch attempt $attempt failed — retrying"
+            sleep 15
+          done
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "⚠️ המיזוג הצליח, אך הפעלת בניית ה-Release נכשלה. הריצו ידנית: Actions → Build release from committed archive."
+          exit 1
 
   on-failure-report:
     runs-on: ubuntu-latest
+    needs: merge-if-verify-passed
     if: failure()
     steps:
-      - name: Report failure on the last qualifying PR
+      - name: Report the failure on the candidate PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PR=$(gh pr list --repo "${{ github.repository }}" \
-                     --label auto-merge-candidate \
-                     --state open \
-                     --json number --jq '.[0].number // ""')
+          PR=$(gh pr list --repo "$GITHUB_REPOSITORY" \
+                 --label auto-merge-candidate --state open \
+                 --json number --jq '.[0].number // ""')
           if [ -n "$PR" ]; then
-            gh pr comment "$PR" --repo "${{ github.repository }}" \
-               --body "❌ Auto-merge failed — the previous verified archive remains published. See the run log for details."
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "❌ האוטו-מיזוג לא הושלם — הגרסה המאומתת האחרונה נשארת באוויר. ראו את הלוג של הריצה."
           fi

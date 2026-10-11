@@ -1,5 +1,9 @@
-# releases עולים ישירות ל-Release ZIP ע"י ה-workflow; kolzchut_out נוצר ל LFS
+# releases עולים ישירות ל-Release ZIP ע"י ה-workflow; kolzchut_out מנוהל ב-Git LFS
 releases/
 __pycache__/
 *.pyc
 .DS_Store
+
+# כלי עבודה מקומיים / קבצים זמניים
+.freebuff/
+kolzchut_report.json

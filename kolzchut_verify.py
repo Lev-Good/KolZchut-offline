@@ -5,7 +5,8 @@ Integrity verifier for the KolZchut offline archive.
 
 Runs the same checks in CI (on a contributor's Pull Request) and locally.
 Exit code 0 = clean archive, 1 = failures found. Produces a machine-readable
-report on stdout (JSON) plus a human-readable summary on stderr.
+report on stdout (JSON only — every warning goes to stderr) plus a
+human-readable summary on stderr. Callers can json.loads(stdout) directly.
 
 Checks:
   1. index.json parses and every entry has string slug + known status
@@ -14,15 +15,21 @@ Checks:
      no duplicates — a duplicate is two titles pointing at the same slug)
   4. no page HTML contains disallowed content markers (script/img tags)
      after scrubbing — verifies the content filter effect
-  5. internal links in HTML point at files that exist either on disk or in
-     the index (broken-link ratio reported; > 2% is an error)
-  6. anomalous diff: archive must not shrink by > 200 pages or grow by
-     > 2,000 pages vs the baseline index (baseline = master's index.json
-     when running in CI, none locally unless --baseline given)
+  5. internal links in HTML resolve to a page that exists on disk or in the
+     index. The broken-link ratio is *reported* (stderr + JSON) but is NOT a
+     failure: links into pages outside this archive subset are a known
+     limitation of a subset archive, not a corruption signal.
+  6. anomalous diff: archive must not shrink by more than --allow-shrink pages
+     or grow by more than --allow-grow pages vs the baseline index (baseline =
+     master's index.json in CI). Because kolzchut_out/index.json is stored in
+     Git LFS, the baseline is transparently smudged when `git show` returns a
+     pointer. A baseline that was *requested* but cannot be read is a hard
+     error, so this check can never silently disappear from the CI gate.
 
 Usage:
   python kolzchut_verify.py [--out kolzchut_out] [--baseline master]
-                             [--allow-shrink N] [--allow-grow N]
+                            [--baseline-index PATH] [--require-baseline]
+                            [--allow-shrink N] [--allow-grow N]
 """
 
 import argparse
@@ -36,6 +43,10 @@ DISALLOWED_TAGS = {"script", "iframe", "img", "video", "audio", "object", "embed
 DEFAULT_ALLOW_SHRINK = 200
 DEFAULT_ALLOW_GROW = 2000
 OUT_DEFAULT = Path("kolzchut_out")
+
+# Any path matched by .gitattributes (kolzchut_out/**) is stored in Git LFS, so
+# `git show <ref>:kolzchut_out/index.json` yields a pointer instead of JSON.
+LFS_POINTER_PREFIX = "version https://git-lfs.github.com/spec/v1"
 
 
 def load_index(out: Path):
@@ -128,8 +139,9 @@ def check_html_cleanliness(out: Path, sample: int = 400):
 
 
 def check_internal_links(out: Path, index: dict, sample: int = 200):
-    """Extract page-local hrefs and verify target exists on disk or can be derived
-    from index titles (make_filename). Broken-link ratio over 2% is an error.
+    """Extract page-local hrefs and verify the target exists on disk or can be
+    derived from index titles (make_filename). The broken-link ratio is
+    reported for humans, never used as a merge blocker.
 
     Some legacy downloads contain stale slug hashes in their HTML (because the
     full-download make_filename and the delta-sync title_to_file diverged at one
@@ -188,18 +200,49 @@ def check_internal_links(out: Path, index: dict, sample: int = 200):
     return [], ratio, broken, total
 
 
-def get_baseline_index(baseline: str | None):
+def smudge_lfs(raw: str) -> str:
+    """Resolve a Git-LFS pointer blob to its real content.
+
+    `git show <ref>:<path>` and `git cat-file` both return the raw blob, which
+    for anything matched by .gitattributes (kolzchut_out/**) is an LFS pointer.
+    Without this, the baseline index silently failed to parse in CI and the
+    anomalous-size check never ran.
+    """
+    if not raw.lstrip().startswith(LFS_POINTER_PREFIX):
+        return raw
+    try:
+        r = subprocess.run(["git", "lfs", "smudge"], input=raw,
+                           capture_output=True, text=True, check=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print(f"warning: git lfs smudge failed on baseline object: {exc}",
+              file=sys.stderr)
+        return raw
+    return r.stdout
+
+
+def get_baseline_index(baseline: str | None, baseline_index: str | None = None):
+    """Return the baseline index dict, or None when it cannot be read."""
+    if baseline_index:
+        try:
+            return json.loads(Path(baseline_index).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"warning: --baseline-index {baseline_index} unreadable: {exc}",
+                  file=sys.stderr)
+            return None
     if not baseline:
         return None
     try:
         raw = subprocess.run(["git", "show", f"{baseline}:kolzchut_out/index.json"],
                              capture_output=True, text=True, check=True).stdout
-        return json.loads(raw)
     except subprocess.CalledProcessError:
-        print(f"warning: baseline {baseline} has no index.json; skipping anomalous-diff check")
+        print(f"warning: baseline {baseline} has no index.json; "
+              f"anomalous-diff check skipped", file=sys.stderr)
         return None
+    try:
+        return json.loads(smudge_lfs(raw))
     except ValueError as exc:
-        print(f"warning: baseline index unparsable: {exc}; skipping anomalous-diff check")
+        print(f"warning: baseline index unparsable: {exc}; "
+              f"anomalous-diff check skipped", file=sys.stderr)
         return None
 
 
@@ -208,6 +251,12 @@ def main():
     parser.add_argument("--out", default=str(OUT_DEFAULT))
     parser.add_argument("--baseline", default="",
                         help="ref to compare size against, e.g. 'origin/master' in CI")
+    parser.add_argument("--baseline-index",
+                        help="path to a materialized baseline index.json "
+                             "(overrides --baseline; use when the ref stores it in LFS)")
+    parser.add_argument("--require-baseline", action="store_true",
+                        help="also demand a baseline when none was given "
+                             "(a requested baseline already fails loudly)")
     parser.add_argument("--allow-shrink", type=int, default=DEFAULT_ALLOW_SHRINK)
     parser.add_argument("--allow-grow", type=int, default=DEFAULT_ALLOW_GROW)
     args = parser.parse_args()
@@ -241,16 +290,26 @@ def main():
                                           "broken": broke, "checked": total}
     errors += e5
 
-    base = get_baseline_index(args.baseline)
-    if base is not None:
+    base = get_baseline_index(args.baseline, args.baseline_index)
+    if base is None:
+        # A baseline that was *requested* but cannot be read is an error, not a
+        # silent skip — a required check must never vanish quietly.
+        if args.baseline or args.baseline_index or args.require_baseline:
+            msg = (f"baseline {args.baseline_index or args.baseline or '(none given)'!r} "
+                   f"could not be read — anomalous-size check cannot run")
+            report["checks"]["size_delta_vs_baseline"] = {"errors": [msg]}
+            errors.append(msg)
+    else:
         d = len(index) - len(base)
         anomalous = (d < -args.allow_shrink) or (d > args.allow_grow)
-        report["checks"]["size_delta_vs_baseline"] = {
-            "baseline_pages": len(base), "new_pages": len(index),
-            "delta": d, "anomalous": anomalous}
+        size_errors = []
         if anomalous:
-            errors.append(f"anomalous size change vs {args.baseline}: "
-                          f"{d:+d} pages (allowed -{args.allow_shrink}/+{args.allow_grow})")
+            size_errors.append(f"anomalous size change vs {args.baseline}: "
+                               f"{d:+d} pages (allowed -{args.allow_shrink}/+{args.allow_grow})")
+        report["checks"]["size_delta_vs_baseline"] = {
+            "errors": size_errors, "baseline_pages": len(base), "new_pages": len(index),
+            "delta": d, "anomalous": anomalous}
+        errors += size_errors
 
     report["errors"] = errors[:50]
     report["total_errors"] = len(errors)
@@ -264,6 +323,7 @@ def main():
         sys.exit(1)
     print("VERIFY OK: archive is consistent", file=sys.stderr)
     sys.exit(0)
+
 
 if __name__ == "__main__":
     main()
