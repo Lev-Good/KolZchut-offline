@@ -16,6 +16,12 @@ permissions:
   contents: read
   pull-requests: read
 
+# עקרון אבטחה: סקריפטי אימות kolzchut_verify.py נשלפים מה-PR (המקור של
+# הסקריפטים ל-א שינוי) עם הבדיקות להפעלה בר Git בזמן רץ הבדיקות.
+
+# Content filter: PR הוא הנטען המדוק; ל-runner אין גישה ל-master רק ל-ב תקינות ה-
+# דיחות וזמן (untrusted).
+
 concurrency:
   group: kolzchut-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -58,7 +64,10 @@ jobs:
 
       - name: Verify archive integrity (JSON report + strict exit)
         run: |
-          python kolzchut_verify.py \
+          # The verify script comes from the PR (so verify-run logic changes are
+          # testable per-PR); the archive CONTENT under verification also comes
+          # from the PR; the size baseline comes from origin/master.
+          python pr-archive/kolzchut_verify.py \
             --out kolzchut_out_verified/kolzchut_out \
             --baseline origin/master \
             --allow-shrink 200 \
@@ -71,7 +80,7 @@ jobs:
           python - <<'PY'
           import json, sys, subprocess
           r = subprocess.run(
-              [sys.executable, "kolzchut_verify.py",
+              [sys.executable, "pr-archive/kolzchut_verify.py",
                "--out", "kolzchut_out_verified/kolzchut_out",
                "--baseline", "origin/master"],
               capture_output=True, text=True)
@@ -90,6 +99,7 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import sys
           from pathlib import Path
           delta = Path("kolzchut_out_verified/kolzchut_out/delta.json")
           if not delta.exists():
