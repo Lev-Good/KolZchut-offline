@@ -1,21 +1,24 @@
-name: Daily KolZchut sync + release
+name: Build release from committed archive
+
+# בונה ZIP מהארכיון שנמצא כבר בריפו (kolzchut_out/ דרך Git LFS).
+# לא נדרשת גישה ל-API של כל-זכות מהענן — עובד גם כש-GitHub נחסם.
 
 on:
-  schedule:
-    - cron: "0 4 * * *"      # 04:00 UTC = 06:00 Israel time
-  workflow_dispatch: {}       # manual trigger button
+  workflow_dispatch: {}        # כפתור הרצה ידני
 
 permissions:
-  contents: write             # needed to create releases
+  contents: write
 
 jobs:
-  sync-and-release:
+  build-release:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 20
 
     steps:
-      - name: Check out repo
+      - name: Check out repo (with LFS)
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -25,55 +28,24 @@ jobs:
       - name: Install dependencies
         run: pip install requests beautifulsoup4
 
-      - name: Restore archive state (index + pages cache)
-        uses: actions/cache@v4
-        with:
-          path: kolzchut_out
-          key: kolzchut-archive-${{ github.run_id }}
-          restore-keys: |
-            kolzchut-archive-
-
-      - name: First full download if archive missing
-        id: bootstrap
-        run: |
-          if [ ! -f kolzchut_out/index.json ]; then
-            echo "No archive - running FULL download"
-            python kolzchut_download.py
-          else
-            echo "Archive present - running DELTA sync"
-            python kolzchut_sync_delta.py
-          fi
-
-      - name: Build portal
-        if: always()
-        run: python kolzchut_build_portal.py
+      - name: Build portal (with GitHub repo for update-check)
+        run: python kolzchut_build_portal.py --github-repo Lev-Good/KolZchut-offline
 
       - name: Build release ZIP + manifest
         id: release
         run: |
           python kolzchut_release.py
-          DATE=$(date -u +%Y%m%d)
-          CHANGED=$(python -c "
-          import json,pathlib
-          d=pathlib.Path('kolzchut_out/delta.json')
-          n=0
-          if d.exists():
-              n=json.loads(d.read_text(encoding='utf-8')).get('counts',{}).get('changed',0)
-          print('1' if n else '0')
-          ")
-          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
+          DATE=$(date -u +%Y%m%d%H%M)
           echo "date=$DATE" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
-        if: steps.release.outputs.changed == '1'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.release.outputs.date }}
           files: releases/kolzchut_*.zip
           body: |
-            עדכון יומי של ארכיון כל זכות האופלייני.
-            - דפים שהתעדכנו: ראו delta.json בתוך ה-ZIP
-            - הורידו, פתחו, והחליפו את התיקייה הקיימת
+            עדכון ארכיון כל זכות האופלייני.
+            הורידו את ה-ZIP, פתחו, והחליפו תיקייה קיימת (או פתחו בתיקייה חדשה).
           draft: false
           prerelease: false
         env:
