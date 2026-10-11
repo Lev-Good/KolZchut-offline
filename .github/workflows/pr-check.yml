@@ -32,6 +32,9 @@ jobs:
           lfs: false
           fetch-depth: 1
 
+      - name: Fetch origin/master for baseline comparison
+        run: git fetch origin master --depth=1
+
       - name: Check out PR archive content (untrusted data, not code)
         uses: actions/checkout@v4
         with:
