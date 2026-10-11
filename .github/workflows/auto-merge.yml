@@ -11,6 +11,7 @@ on:
   check_suite:
     types: [completed]
   workflow_dispatch: {}
+  status: {}
 
 permissions:
   contents: write
