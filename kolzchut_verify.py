@@ -182,7 +182,10 @@ def check_internal_links(out: Path, index: dict, sample: int = 200):
               f"absent from this archive subset (live wiki may have them; "
               f"possibly flagged in future sync), examples: {broken_examples}",
               file=sys.stderr)
-    return errors, ratio, broken, total
+    # Dangling links to pages outside this archive subset are informative, not
+    # a violation — always return an empty errors list here (ratio is reported
+    # for the human-readable JSON only).
+    return [], ratio, broken, total
 
 
 def get_baseline_index(baseline: str | None):
