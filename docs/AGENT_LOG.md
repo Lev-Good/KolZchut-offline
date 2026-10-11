@@ -1,5 +1,33 @@
 # יומן עבודה
 
+## 2026-10-11 — בדיקת גישה מענן (probe) + תכניות VPS
+
+### מטרה
+לבדוק בהרצה אמיתית אם אפשר להריץ סנכרון יומי ב-GitHub Actions, ללא מחבשת המשתמש.
+
+### בוצע
+- workflow ניסיוני `.github/workflows/cloud-probe.yml` (הרצה ידנית בלבד).
+- ריצה אמיתית (run 38162887263): sitemap מביא HTTP **403**, דף מאמר ציבורי מביא HTTP **403**, עם UA מזוהה ותדירות מכובדת.
+- מסקנה: GitHub runner נחסם על ידי האתר **לכל הנתיבים** — לא רק ה-API.
+- נכתב `docs/VPS_DEPLOYMENT.md` — סקר ספקים📳 
+  (JetServer ישראל, Vultr תל-אביב, OVH, Hetzner, Oracle free…), עלויות ותנאים.
+- מוסדר: הרצת Release בענן ממשיכה לעבוד מהארכיון בריפו (ללא פנייה לכל-זכות).
+- README עודכן לפי המציאות: סנכרון sitemap-based ממחבשת מקומית/VPS; לא RecentChanges API.
+
+### ראיות
+```
+[sitemap] status=403 content_type=text/html size=3457 err=HTTPError 403
+[article] status=403 content_type=text/html size=3508 err=HTTPError 403
+PROBE OUTCOME: BLOCKED/FAILED — cloud sync NOT confirmed
+```
+run: https://github.com/Lev-Good/KolZchut-offline/actions/runs/38162887263
+
+### מקור
+מחקר VPS עודכן אמפירית 11.10.2026.
+
+### סטטוס
+הושלם. אוטומציה מהענן אינה אפשרית ללא הרשאה מפורשת — ממשיכים בהרצה מקומית או VPS עם אישור.
+
 ## 2026-10-11 — תיקון מנגנון הסנכרונון (sitemap + אימות מחיקות)
 
 ### מטרה

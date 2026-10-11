@@ -6,115 +6,97 @@
 
 ---
 
+## גישת הרשת האמיתית (מגבלות חשובות)
+
+| מה | סטטוס |
+|---|---|
+| MediaWiki Action API (`/w/he/api.php`) | **חסום / מוגדר כ־Disallow על ידי robots.txt** — לא לשימוש באוטומציה |
+| Sitemap NS0 (`/sitemap/sitemap-kz_he-NS_0-0.xml.gz`) | מותר — כולל `lastmod` לכל דף |
+| פיד Atom לשינויים | מותר אך מוגבל להיסטוריה קצרה |
+| דפי מאמרים (`/he/<page>`) | מותרים — עם **Crawl-delay: 5** בין בקשות |
+| GitHub‑hosted runner (Actions) | **חסום** — HTTP 403 מכל נתיב על האתר (נבדק בפועל, run 38162887263, 11.10.2026) |
+| VPS פרטי | **אפשרי — מומלץ לקבל אישור מפורש מכל-זכות** לפני ריצה |
+
+מנגנון הסנכרון הוא **sitemap‑based** (לא RecentChanges API):
+משווה את `lastmod` של כל דף בה-sitemap מול `lastmod` שנשמר ב־`index.json` —
+ובכך מזהה דפים חדשים, משונים, ונמחקים, בלי לסרוק מחדש את האתר ובלי להשתמש ב־API.
+
+---
+
 ## ארכיטקטורה
 
 ```
-┌────────────────────┐          ┌─────────────────────┐
-│ KolZchut wiki API  │◄──rt─────│  GitHub Actions     │
-│ (kolzchut.org.il)  │          │  - סורק RecentChanges│
-└────────────────────┘          │  פעם ביום            │
-                                │  - מעדכן דפים שהשתנו │
-                                │  - מבנה ZIP מלא     │
-                                │  - מפרסם Release    │
-                                └─────────┬───────────┘
-                                          │
-                                          ▼
-                                ┌─────────────────────┐
-        דפדפן מקומי     │  גרסה חדשה ב-GitHub │
-   ┌──────────────┐              │  (manifest.json)    │
-   │  index.html  │◄─────────────│                     │
-   │  בדיקת גרסה   │              └─────────────────────┘
-   │  + הודעת עדכון│
-   └──────────────┘
+┌──────────────────────┐            ┌────────────────────────┐
+│   sitemap NS0 (gz)    │──────────► │   מחשב מקומי / VPS      │
+│ kolzchut.org.il       │  (מותר)   │  kolzchut_sync_delta.py │
+└──────────────────────┘            │  או kolzchut_local_sync.py│
+                                    └──────────┬─────────────┘
+                                               │ (לחיצה ידנית / cron יומי מקומי)
+                                               │ push kolzchut_out (LFS)
+                                               ▼
+                                    ┌────────────────────────┐
+   דפדפן מקומי                      │      GitHub             │
+  ┌───────────────┐                │ kolzchut_out/ בריפו      │
+  │  index.html   │◄───in-app──── │ workflow Build release  │
+  │  בדיקת גרסה    │  version check│ → ZIP Release           │
+  │  + הודעת עדכון │                │                          │
+  └───────────────┘                └────────────────────────┘
 ```
 
 ### רכיבים
 
 | קובץ | תפקיד |
 |---|---|
-| `kolzchut_download.py` | הורדה מלאה ראשונית (7,358 דפים) |
-| `kolzchut_sync_delta.py` | סנקרון דלתא: RecentChanges → הורדת דפים שהשתנו |
+| `kolzchut_download.py` | הורדה מלאה ראשונית (7,358 דפים) — דרך ה-API; לשימוש חד-פעמי מקומי |
+| `kolzchut_sync_delta.py` | סנכרון דלתא: sitemap lastmod → הורדת דפים שהשתנו (דרך דפי מאמרים מותרים) |
 | `kolzchut_build_portal.py` | בניית דף בית עם חיפוש מקומי |
 | `kolzchut_remove_content.py` | הסרת תכנים בעייתיים (רשימת מילים/דפים) |
 | `kolzchut_release.py` | אריזת גרסה (ZIP + manifest.json) |
-| `.github/workflows/daily-sync.yml` | אוטומצייה יומית ב-GitHub |
+| `kolzchut_local_sync.py` | ריצת־על יומית: סנכרון → סינון → פורטל → push → trigger Release |
+| `.github/workflows/daily-sync.yml` | בניית ZIP/Release מהארכיון הקיים בריפו (ללא גישה לאתר) |
+| `.github/workflows/cloud-probe.yml` | בדיקת גישה ענן (ריצה ידנית؛ הראתה 403 מ-runners) |
 
 ---
 
-## זרימה
+## זרימת סנכרון (kolzchut_sync_delta.py)
 
-### שלב 1 — הורדה מלאה ראשונית (חד-פעמי)
+1. שולף sitemap טרי: `{title: lastmod}`.
+2. משווה מול `index.json` (ששומר `lastmod` המקומי): חדש / משונה / נמחק.
+3. אם דף מסומן כנמחק ב-sitemap → מבצע **HEAD** לכתובת הציבורית לפני מחיקה מהארכיון.
+   ה-sitemap משמיט לפעמים דפים קיימים — אסור להסתמך עליו למחיקות בלבד.
+4. מוריד רק דפים משונים/חדשים דרך **דפי המאמרים הציבוריים** (Crawl-delay 5).
+5. מציב `last_sync.txt` רק אחרי ריצה שלמה (כשלים נשמרים לריצה הבאה דרך `retry_queue.json`).
+6. מעדכן `index.json` + `delta.json` + `sync_log.jsonl` + `deleted_pages.json`.
 
+## זרימה יומית מומלצת
+
+### אופציה A — מהמחשב המקומי (המנגנון הנוכחי)
 ```bash
-python kolzchut_download.py
+python kolzchut_local_sync.py        # סנכרון דלתא → סינון → פורטל → push → workflow run
 ```
-→ `kolzchut_out/pages/` (7,358 דפי HTML) + `kolzchut_out/index.json`
+ניתן לשלב ב־cron / Windows Task Scheduler פעם ביום.
 
-### שלב 2 — ניקוי תכנים (אופציונלי, לפני אריזה)
+### אופציה B — VPS עצמאי (לא תלוי במחשב שלך)
+ראה `docs/VPS_DEPLOYMENT.md` להשוואת ספקים, עלויות ותנאים.
+כולל את הדרישה לקבלת אישור מכל-זכות לריצה סדירה מכתובת IP ציבורית.
 
+### בניית Release ב-GitHub (עובד בענן, ללא גישה לאתר)
 ```bash
-python kolzchut_remove_content.py --remove-pages "דף 1" "דף 2" --blank-pages "דף 3"
-python kolzchut_remove_content.py --remove-words "מילה1" "מילה2"
+gh workflow run "Build release from committed archive"
 ```
-
-### שלב 3 — בניית פורטל
-
-```bash
-python kolzchut_build_portal.py
-```
-→ `kolzchut_out/index.html` (אינדקס + חיפוש מקומי)
-
-### שלב 4 — אריזת גרסה
-
-```bash
-python kolzchut_release.py
-```
-→ `releases/kolzchut_v<date>.zip` + `manifest.json` (רשימת כל דף + hash)
+ה-workflow מבוסס רק על `kolzchut_out/` שהועלה כבר לריפו (LFS) — לא פונה לכל-זכות.
 
 ---
 
-## מנגנון העדכונים (Delta)
+## בדיקת גרסה מהדפדפן
 
-מדיה-ויקי מספקת ערוץ עדכונים מובנה: `list=recentchanges`.
-לא צריך לסרוק את כל הויקי פעם ביום — בודקים **מה השתנה מאז הסנקרון הקודם**:
-
-```bash
-python kolzchut_sync_delta.py
-```
-
-הסקריפט:
-1. קורא `last_sync.txt` (חותמת זמן של הסנקרון האחרון).
-2. מבקש מה-API `list=recentchanges&rcstart=<last_sync>&rcend=now` ומזהה רק דפים שהשתנו.
-3. מוריד רק את אותם דפים (בדרך-כלל עשרות בודדות ביום, לא אלפים).
-4. משכתב בזהירות `last_sync.txt`.
-5. אם דף נמחק בויקי → מוסיף אותו ל-`deleted_pages.json` (הסקריפט הבא यדע למחוק).
-6. מפיק `delta.json` — רשימת דפים שהשתנו (לשימוש Another script, ל-Release).
-
-ב-GitHub Actions: מריצים פעם ביום. אם היו שינויים
-→ נבנה ZIP והוא יישלח כ-Release חדש.
-אם אין שינויים → לא נוצר Release חדש.
-
-### עדכון מקומי (המשתמש)
-
-1. התוכנה (דף ה-index.html) מבצע בדיקת גרסה מול GitHub API (`releases/latest`).
-2. אם יש גרסה חדשה → מוצגת הודעה עם קישור להורדה.
-3. לאחר הורדה והחלפה → כל הדפים מתעדכנים.
-* (עדכון חלקי של דפים בודדים — קיים גם בסקריפט: עדכון רק הדפים שב-delta.json)
-
----
-
-## פרסום ב-GitHub
-
-מפעילים `.github/workflows/daily-sync.yml` (ראו דוגמה בתיקיית `workflows/`).
-ה-workflow רץ פעם ביום ב-04:00 UTC (06:00 שעון ישראל):
-1. רץ `kolzchut_sync_delta.py`.
-2. אם יש שינויים → אריזה ידנית/אוטומטית + יצירת Release עם ה-ZIP.
-3. מפרסם Release חדש � soft-launch (draft עד אישור ידני).
-
----
+דף הבית מבצע `fetch`/`$.ajax` ל־`api.github.com/repos/.../releases/latest`
+ומציג הודעת עדכון כשמספר הגרסה החדש גבוה מהמקומי (`version.txt`).
+בשימוש מ-`file://` הבדיקה עשויה להיחסם בדפדפנים — ההודעה עשויה שלא להופיע;
+אין נזק פונקציונלי.
 
 ## הרישיון
 
-תוכן: [CC-BY-NC-SA-2.5-IL](https://creativecommons.org/licenses/by-nc-sa/2.5/il/) —
+תוכן: [CC‑BY‑NC‑SA‑2.5‑IL](https://creativecommons.org/licenses/by-nc-sa/2.5/il/) —
 אין שימוש מסחרי; נדרש קרדיט בכל דף (מקור: אתר כל זכות, kolzchut.org.il).
-הקוד: MIT.
+קוד: MIT.

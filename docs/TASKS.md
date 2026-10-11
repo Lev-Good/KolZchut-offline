@@ -2,6 +2,18 @@
 
 ## הושלם
 
+- [x] Probe workflow ב-GitHub Actions — הוכחת 403 מכל נתיבי כל-זכות מ-runner
+- [x] סקר VPS חלופי + תיעוד docs/VPS_DEPLOYMENT.md
+- [x] README מעודכן למצב בפועל (sitemap-based sync, חסימת Actions)
+
+## בביצוע
+
+- [ ] הרצת סנכרון יומי סדיר (מקומי או VPS)
+- [ ] בקשת גישה רשמית מכל-זכות לסנכרון אוטומטי
+
+
+## הושלם
+
 - [x] סנכרון delta מבוסס sitemap + אימות מחיקות בפועל (sitemap false-positives)
 - [x] Backfill lastmod לאינדקס (7,348 דפים)
 - [x] תיקון URL_SAFE ב-kolzchut_download.py
