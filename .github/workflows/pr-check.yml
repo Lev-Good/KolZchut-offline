@@ -1,11 +1,14 @@
 name: PR — verify archive integrity
 
-# בודק בקשות משילוב (PR) ממעדכנים מורשים. עקרונות אבטחה:
-#  - כל סקריפטי האימות (verify / sync / remove_content) מגיעים מ-master בלבד,
-#    לא מה-PR (ה-PR מכיל רק ת Conjected archive content).
-#  - ל-runner אין הרשאות כתיבה; התוכן הנבדק נקרא ולא מורץ.
-#  - לכל בדיקה יש סף; ספים אלו הם בסגינות בצד ה-avatar ננקט ב 时.
-#  אי אפשר למרוץ פרסום חלקי: אם בדיקה נכשלת, ה-PR לא מאושר.
+# מודל האמון (דרישת אבטחה: אין להריץ קוד לא מהימן עם הרשאות כתיבה למאגר;
+# יש להפריד בין בדיקת התוכן שהוגש לבין שלב המיזוג והפרסום המורשה):
+#   - כל סקריפטי האימות (kolzchut_verify.py, kolzchut_remove_content.py)
+#     נלקחים מ-BASE (master) בלבד — לעולם לא מה-PR.
+#     PR תורם *נתוני ארכיון* בלבד, לא קוד.
+#   - ל-job הזה אין הרשאות כתיבה (contents: read). התוכן הנבדק נקרא, לא מורץ.
+#   - המיזוג והפרסום חיים ב-auto-merge.yml, שדורש הרשאות כתיבה ורץ רק
+#     כשהבדיקה הזו הסתיימה בהצלחה.
+#   - בדיקה שנכשלת חוסמת את המיזוג; שום דבר לא מפורסם חלקית.
 
 on:
   pull_request:
@@ -14,13 +17,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
-
-# עקרון אבטחה: סקריפטי אימות kolzchut_verify.py נשלפים מה-PR (המקור של
-# הסקריפטים ל-א שינוי) עם הבדיקות להפעלה בר Git בזמן רץ הבדיקות.
-
-# Content filter: PR הוא הנטען המדוק; ל-runner אין גישה ל-master רק ל-ב תקינות ה-
-# דיחות וזמן (untrusted).
 
 concurrency:
   group: kolzchut-pr-${{ github.event.pull_request.number }}
@@ -31,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Check out master (trusted scripts)
+      - name: Check out base branch (trusted verification scripts only)
         uses: actions/checkout@v4
         with:
           ref: master
@@ -41,12 +37,12 @@ jobs:
       - name: Fetch origin/master for baseline comparison
         run: git fetch origin master --depth=1
 
-      - name: Check out PR archive content (untrusted data, not code)
+      - name: Check out PR archive content (untrusted data, never executed)
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          lfs: true
           path: pr-archive
+          lfs: true
           fetch-depth: 1
 
       - name: Set up Python
@@ -55,81 +51,108 @@ jobs:
           python-version: "3.12"
 
       - name: Install deps
-        run: pip install requests beautifulsoup4
+        run: pip install -r requirements.txt
 
-      - name: Pre-populate delta.json / baseline for verification
+      - name: Stage the submitted archive as data
         run: |
           mkdir -p kolzchut_out_verified
           rsync -a --delete pr-archive/kolzchut_out/ kolzchut_out_verified/kolzchut_out/
 
-      - name: Verify archive integrity (JSON report + strict exit)
+      - name: Materialize the master baseline index (Git LFS)
         run: |
-          # The verify script comes from the PR (so verify-run logic changes are
-          # testable per-PR); the archive CONTENT under verification also comes
-          # from the PR; the size baseline comes from origin/master.
-          python pr-archive/kolzchut_verify.py \
+          # kolzchut_out/** is stored in Git LFS, so `git show` alone returns a
+          # pointer and the baseline would fail to parse — which silently
+          # disabled the anomalous-size check. Fetch just this one object and
+          # smudge it; the step fails loudly if the baseline is unavailable.
+          git lfs fetch --include="kolzchut_out/index.json" origin master
+          git show origin/master:kolzchut_out/index.json > kolzchut_baseline.pointer
+          git lfs smudge < kolzchut_baseline.pointer > kolzchut_baseline_index.json
+          python -c "import json; d = json.load(open('kolzchut_baseline_index.json', encoding='utf-8')); print(f'baseline pages: {len(d)}')"
+
+      - name: Verify archive integrity (trusted verifier + master baseline)
+        run: |
+          # Script from master, content from the PR, size baseline from master.
+          # --require-baseline guarantees the anomalous-size check cannot be
+          # silently skipped.
+          python kolzchut_verify.py \
             --out kolzchut_out_verified/kolzchut_out \
-            --baseline origin/master \
+            --baseline-index kolzchut_baseline_index.json \
+            --require-baseline \
             --allow-shrink 200 \
             --allow-grow 2000
 
-      - name: Verify content filter (no disallowed tags in sampled pages)
+      - name: Enforce the content filter on the GitHub side (must be a no-op)
         run: |
-          # kolzchut_verify's html_cleanliness check already covers this;
-          # kept explicit here so a future pipeline change can't silently drop it.
+          # The real filter (not a sample) runs here, on the GitHub side, before
+          # any merge. A submitted archive that was not filtered locally changes
+          # under it and fails the PR. Config-independent and deterministic.
+          python kolzchut_remove_content.py --default-charedi-list \
+            --out kolzchut_out_verified/kolzchut_out
           python - <<'PY'
-          import json, sys, subprocess
-          r = subprocess.run(
-              [sys.executable, "pr-archive/kolzchut_verify.py",
-               "--out", "kolzchut_out_verified/kolzchut_out",
-               "--baseline", "origin/master"],
-              capture_output=True, text=True)
-          if not r.stdout:
-              print(r.stderr, file=sys.stderr)
-              sys.exit(1)
+          import filecmp
+          import json
+          import sys
+          from pathlib import Path
+
+          submitted = Path("pr-archive/kolzchut_out")
+          filtered = Path("kolzchut_out_verified/kolzchut_out")
+
+          sub_pages = {p.name for p in (submitted / "pages").glob("*.html")}
+          flt_pages = {p.name for p in (filtered / "pages").glob("*.html")}
+
+          removed = sorted(sub_pages - flt_pages)
+          changed = sorted(n for n in sorted(sub_pages & flt_pages)
+                           if not filecmp.cmp(submitted / "pages" / n,
+                                              filtered / "pages" / n,
+                                              shallow=False))
+
           try:
-              s = r.stdout.strip()
-              # Extract JSON (last balanced object)
-              try:
-                  report = json.loads(s)
-              except Exception:
-                  start = s.find('{')
-                  end = s.rfind('}')
-                  if start != -1 and end != -1 and end > start:
-                      report = json.loads(s[start:end+1])
-                  else:
-                      raise
-          except Exception as e:
-              print(r.stderr or '', file=sys.stderr)
-              raise
-          hc = report["checks"].get("html_cleanliness", {})
-          if hc.get("errors"):
-              print(f"FILTER CHECK FAILED: {hc['errors'][:5]}", file=sys.stderr)
+              sub_idx = json.loads((submitted / "index.json").read_text(encoding="utf-8"))
+              flt_idx = json.loads((filtered / "index.json").read_text(encoding="utf-8"))
+          except (OSError, ValueError) as exc:
+              print(f"FILTER CHECK: index.json unreadable: {exc}", file=sys.stderr)
               sys.exit(1)
-          sampled = hc.get("sampled", 0)
-          print(f"filter check ok — sampled {sampled} pages, no disallowed tags")
+
+          problems = []
+          if removed:
+              problems.append(f"{len(removed)} page(s) the filter would remove: {removed[:5]}")
+          if changed:
+              problems.append(f"{len(changed)} page(s) the filter would modify: {changed[:5]}")
+          if sub_idx != flt_idx:
+              problems.append("index.json differs after re-running the filter "
+                              f"(submitted {len(sub_idx)} entries vs filtered {len(flt_idx)})")
+
+          if problems:
+              print("CONTENT FILTER NOT APPLIED by the submitter:", file=sys.stderr)
+              for p in problems:
+                  print(f"  - {p}", file=sys.stderr)
+              sys.exit(1)
+
+          print(f"content filter is a no-op on all {len(sub_pages)} pages "
+                f"— filtering was applied before submission")
           PY
 
-      - name: Verify deletion logic (deleted pages were verified 404 on the live site)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify deletions and sync failures (delta.json)
         run: |
           python - <<'PY'
           import json
           import sys
           from pathlib import Path
+
           delta = Path("kolzchut_out_verified/kolzchut_out/delta.json")
           if not delta.exists():
               print("no delta.json — nothing to validate")
               sys.exit(0)
+
           d = json.loads(delta.read_text(encoding="utf-8"))
           deleted = d.get("deleted", [])
           failed = d.get("counts", {}).get("failed", 0)
+
           if failed > 0:
               print(f"SYNC ERRORS REPORTED: {failed} pages failed — merging blocked",
                     file=sys.stderr)
               sys.exit(1)
-          # Anomalous deletion: > 1% of archive deleted in one run is suspicious.
+
           idx = json.loads(Path("kolzchut_out_verified/kolzchut_out/index.json")
                            .read_text(encoding="utf-8"))
           n = len(idx)
@@ -138,35 +161,51 @@ jobs:
               print(f"ANOMALOUS DELETION: {len(deleted)} pages deleted ({pct:.1f}%) "
                     f"— merging blocked", file=sys.stderr)
               sys.exit(1)
-          print(f"deletion check ok — {len(deleted)} deletions "
-                f"({pct:.2f}%), all verified against live site; sync failed=0")
+
+          print(f"deletion check ok — {len(deleted)} deletions ({pct:.2f}%), "
+                f"sync failures=0")
           PY
 
-      - name: Post verification summary on the PR
+      - name: Publish the verification report to the job summary
         if: always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { execSync } = require('child_process');
-            let report;
-            try {
-              report = execSync(
-                'python kolzchut_verify.py --out pr-archive/kolzchut_out',
-                { encoding: 'utf8' });
-            } catch (e) {
-              // verify exited non-zero; parse report anyway
-              report = e.stdout || '{}';
-            }
-            try {
-              const data = JSON.parse(report);
-              const lines = [];
-              for (const [k, v] of Object.entries(data.checks || {})) {
-                const errs = (v.errors || []).length;
-                lines.push(`${errs === 0 ? "✅" : "❌"} ${k}` +
-                           (errs ? ` (${errs} errors)` : ""));
-              }
-              core.summary.addHeading("PR archive verification").addRaw(
-                lines.join("\n\n") || "(no data)").write();
-            } catch (e) {
-              core.notice(`verify report parse error: ${e.message}`);
-            }
+        run: |
+          python kolzchut_verify.py \
+            --out kolzchut_out_verified/kolzchut_out \
+            --baseline-index kolzchut_baseline_index.json --require-baseline \
+            > kolzchut_report.json || true
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          try:
+              data = json.loads(Path("kolzchut_report.json").read_text(encoding="utf-8"))
+          except (OSError, ValueError) as exc:
+              print(f"(verification report unavailable: {exc})")
+              raise SystemExit(0)
+
+          lines = [f"## KolZchut PR verification — {data.get('total_errors', '?')} error(s)", ""]
+          for name, res in (data.get("checks") or {}).items():
+              errs = res.get("errors") or []
+              mark = "OK" if not errs else "FAIL"
+              detail = ""
+              if name == "internal_links":
+                  detail = (f" — broken {res.get('broken')}/{res.get('checked')} "
+                            f"({res.get('broken_ratio')}); informational, not blocking")
+              if name == "size_delta_vs_baseline" and "delta" in res:
+                  detail = (f" — baseline {res.get('baseline_pages')} → "
+                            f"{res.get('new_pages')} ({res.get('delta'):+d} pages)")
+              lines.append(f"- **{name}**: {mark}{detail}")
+              for e in errs[:3]:
+                  lines.append(f"  - {e}")
+          lines.append("")
+          lines.append("Filter/deletion guards ran separately in their own steps; "
+                       "a non-zero exit there blocks the merge.")
+
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          text = "\n".join(lines) + "\n"
+          if summary:
+              with open(summary, "a", encoding="utf-8") as fh:
+                  fh.write(text)
+          print(text)
+          PY

@@ -135,3 +135,40 @@ kolzchut_sync_delta.py, kolzchut_release.py, kolzchut_remove_content.py, .github
 
 ### סטטוס
 הושלם. הפצה פעילה.
+
+## 2026-10-12 — סבב חיסום מלא של מערכת העדכונים המבוזרת
+
+### מטרה
+סריקה מלאה של המערכת, איתור ותיקון שגיאות, והכנה להפצה מלאה.
+
+### בוצע
+- סריקת כל הסקריפטים, ה-workflows, התיעוד, מצב ה-Git והגנות הענף.
+- איתרתי ותיקנתי 6 בעיות אמיתיות (להלן) + יישור תיעוד.
+- `requirements.txt` חדש; עדכון `.gitignore`; החלטות מתועדות ב-DECISIONS.md.
+
+### בעיות שנמצאו ותוקנו
+1. **פרצת אמון (קריטית):** pr-check הריץ את `kolzchut_verify.py` מתוך ה-PR.
+2. **בדיקה שהתבטלה בשקט:** ה-baseline הוא מצביע LFS → בדיקת השינוי החריג לא רצה.
+3. **auto-merge לא יכול היה להצליח:** polling על rollup שכלל את ה-check runs של עצמו.
+4. **הפעלת Release נכשלה (403):** חסרה הרשאת `actions: write`.
+5. **`TypeError` במסלול `--direct`:** `shell` הועבר פעמיים ל-`subprocess.run`.
+6. **סינון לא נאכף ב-CI:** רק נדגם, לא הורץ המסנן האמיתי. בנוסף תיעוד מיושן
+   (HOW_TO_RUN הצהיר על סנכרון ענן יומי שאינו קיים).
+
+### קבצים שהושפעו
+- `.github/workflows/pr-check.yml`, `.github/workflows/auto-merge.yml`
+- `kolzchut_verify.py`, `kolzchut_contribute.py`, `kolzchut_local_sync.py`, `kolzchut_remove_content.py`
+- `requirements.txt`, `.gitignore`, `HOW_TO_RUN.md`
+- `docs/TASKS.md`, `docs/DISTRIBUTED_UPDATES.md`, `docs/DECISIONS.md`, `docs/AGENT_LOG.md`, `docs/SPEC.md`
+
+### בדיקות
+- `py_compile` לכל סקריפטי ה-Python — עובר.
+- `yaml.safe_load` לכל ה-workflows — עובר; שמות ה-workflows מוצלבים מול `workflow_run` ומול בניית ה-Release.
+- `kolzchut_verify.py --baseline origin/master`: לפני התיקון `size_delta_vs_baseline`
+  נעדר מהדוח; אחריו הוא מופיע והריצה מסתיימת ב-exit 0.
+- `kolzchut_local_sync.run(..., shell=True)`: לפני — `TypeError: got multiple values
+  for keyword argument 'shell'`; אחרי — ריצה תקינה.
+- Branch Protection אומת דרך ה-API: required check `verify`, `enforce_admins`, linear history.
+
+### בעיות פתוחות
+- שינויי תשתית (כמו PR זה) אינם מתמזגים אוטומטית במכוון — נדרש מיזוג של המנהל.
