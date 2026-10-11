@@ -1,5 +1,4 @@
-# הארכיון עצמו לא עולה ל-Git (הוא מתפרסם ב-Release ZIP)
-kolzchut_out/
+# releases עולים ישירות ל-Release ZIP ע"י ה-workflow; kolzchut_out נוצר ל LFS
 releases/
 __pycache__/
 *.pyc
