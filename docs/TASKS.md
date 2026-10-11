@@ -34,6 +34,9 @@
 - [x] `kolzchut_local_sync.py --direct`: תיקון `TypeError` (shell הועבר פעמיים)
 - [x] `kolzchut_remove_content.py`: `--out` לאכיפה ב-CI
 - [x] `requirements.txt` + יישור `HOW_TO_RUN.md`/`TASKS.md`/`DISTRIBUTED_UPDATES.md` למציאות
+- [x] אימות מול GitHub (PR #4): ה-workflow של PR רץ **מה-PR** — הבקרה הקובעת עברה ל-auto-merge
+- [x] בלוקר bootstrap: `pip install -r requirements.txt` על checkout של master — תוקן לתלויות מפורשות
+- [x] בדיקת טריות ב-auto-merge (SHA של הריצה מול head ה-PR)
 
 ## בביצוע
 

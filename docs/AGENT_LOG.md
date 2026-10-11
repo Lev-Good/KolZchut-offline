@@ -172,3 +172,38 @@ kolzchut_sync_delta.py, kolzchut_release.py, kolzchut_remove_content.py, .github
 
 ### בעיות פתוחות
 - שינויי תשתית (כמו PR זה) אינם מתמזגים אוטומטית במכוון — נדרש מיזוג של המנהל.
+
+
+## 2026-10-12 — סבב שני: אימות מול GitHub (PR #4)
+
+### מטרה
+לוודא שהתיקונים עובדים בפועל ב-CI של GitHub, לא רק מקומית.
+
+### בוצע
+- ענף `infra/distributed-pipeline-hardening`, PR #4 (15 קבצים).
+- הריצה הראשונה נכשלה בשלב "Install deps".
+
+### בעיות שנמצאו בריצה
+7. **בלוקר bootstrap:** ה-workflow רץ על ה-checkout של master, שאין בו
+   `requirements.txt` → ה-check הנדרש `verify` נכשל → אי-אפשר למזג (deadlock).
+8. **ממצא ארכיטקטוני:** הריצה הוכיחה ש-GitHub מריץ לאירועי `pull_request` את קובץ
+   ה-workflow **מתוך ה-PR** (הפקודה שהורצה קיימת רק ב-PR). לכן `pr-check.yml` לבדו
+   אינו שכבת אמון, והבקרה הקובעת עברה ל-`auto-merge.yml`.
+
+### פתרון
+- ה-CI מתקין תלויות מפורשות; הארכיון עובר לנתיב ברירת המחדל; הוסר השימוש בדגלים
+  חדשים (`--baseline-index`, `--require-baseline`) לטובת `--baseline origin/master`
+  ש-master תומך בו — כך השער עובד לפני המיזוג ואחריו.
+- `auto-merge`: הגנת תוכן-בלבד היא הבקרה הקובעת + בדיקת טריות SHA מול head ה-PR.
+- `kolzchut_verify.py`: baseline מבוקש שאינו קריא = שגיאה קשה במקום דילוג שקט.
+
+### בדיקות
+- `py_compile` ל-8 סקריפטים; `yaml.safe_load` + `bash -n` + `compile()` לכל בלוק
+  מוטמע ב-workflows — 0 כשלים.
+- שער הסינון (הקוד שחולץ מה-workflow עצמו) בשני כיוונים: לא-מסונן → exit 1,
+  מסונן → exit 0.
+- baseline: ללא → exit 0 בלי הבדיקה; `origin/master` → exit 0 עם הבדיקה;
+  ref לא-קיים → exit 1 עם הודעה מפורשת.
+
+### סטטוס
+חלקי — ממתין לריצת CI ירוקה ולמיזוג אנושי (PR תשתית).

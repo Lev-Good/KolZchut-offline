@@ -22,8 +22,8 @@ Checks:
      or grow by more than --allow-grow pages vs the baseline index (baseline =
      master's index.json in CI). Because kolzchut_out/index.json is stored in
      Git LFS, the baseline is transparently smudged when `git show` returns a
-     pointer; --require-baseline turns an unusable baseline into a hard error
-     so this check can never silently disappear from the CI gate.
+     pointer. A baseline that was *requested* but cannot be read is a hard
+     error, so this check can never silently disappear from the CI gate.
 
 Usage:
   python kolzchut_verify.py [--out kolzchut_out] [--baseline master]
@@ -253,7 +253,8 @@ def main():
                         help="path to a materialized baseline index.json "
                              "(overrides --baseline; use when the ref stores it in LFS)")
     parser.add_argument("--require-baseline", action="store_true",
-                        help="fail instead of skipping when the baseline is unreadable")
+                        help="also demand a baseline when none was given "
+                             "(a requested baseline already fails loudly)")
     parser.add_argument("--allow-shrink", type=int, default=DEFAULT_ALLOW_SHRINK)
     parser.add_argument("--allow-grow", type=int, default=DEFAULT_ALLOW_GROW)
     args = parser.parse_args()
@@ -289,7 +290,9 @@ def main():
 
     base = get_baseline_index(args.baseline, args.baseline_index)
     if base is None:
-        if args.require_baseline:
+        # A baseline that was *requested* but cannot be read is an error, not a
+        # silent skip — a required check must never vanish quietly.
+        if args.baseline or args.baseline_index or args.require_baseline:
             msg = (f"baseline {args.baseline_index or args.baseline or '(none given)'!r} "
                    f"could not be read — anomalous-size check cannot run")
             report["checks"]["size_delta_vs_baseline"] = {"errors": [msg]}

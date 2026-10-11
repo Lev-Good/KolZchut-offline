@@ -6,9 +6,15 @@ name: PR — verify archive integrity
 #     נלקחים מ-BASE (master) בלבד — לעולם לא מה-PR.
 #     PR תורם *נתוני ארכיון* בלבד, לא קוד.
 #   - ל-job הזה אין הרשאות כתיבה (contents: read). התוכן הנבדק נקרא, לא מורץ.
-#   - המיזוג והפרסום חיים ב-auto-merge.yml, שדורש הרשאות כתיבה ורץ רק
-#     כשהבדיקה הזו הסתיימה בהצלחה.
-#   - בדיקה שנכשלת חוסמת את המיזוג; שום דבר לא מפורסם חלקית.
+#
+# שים לב: עבור אירועי pull_request, GitHub מריץ את קובץ ה-workflow **מה-PR**.
+# לכן ה-job הזה הוא משוב מהיר בלבד; הבקרה הקובעת היא auto-merge.yml שרץ
+# מ-branch ברירת המחדל (workflow_run) ומסרב למזג כל PR שנוגע במשהו מחוץ ל-
+# kolzchut_out/** ו-docs/** — כך שאי אפשר גם לשנות את השער וגם להיכנס דרכו.
+#
+# ה-job חייב לעבוד גם עם הסקריפטים של master וגם עם אלה שאחרי המיזוג, ולכן
+# הוא משתמש רק בממשק קיים (נתיבי ברירת מחדל, --baseline <ref>) ואינו תלוי
+# בקבצים שקיימים רק ב-PR.
 
 on:
   pull_request:
@@ -34,7 +40,7 @@ jobs:
           lfs: false
           fetch-depth: 1
 
-      - name: Fetch origin/master for baseline comparison
+      - name: Fetch origin/master (baseline source)
         run: git fetch origin master --depth=1
 
       - name: Check out PR archive content (untrusted data, never executed)
@@ -51,33 +57,35 @@ jobs:
           python-version: "3.12"
 
       - name: Install deps
-        run: pip install -r requirements.txt
-
-      - name: Stage the submitted archive as data
-        run: |
-          mkdir -p kolzchut_out_verified
-          rsync -a --delete pr-archive/kolzchut_out/ kolzchut_out_verified/kolzchut_out/
+        # Packages listed explicitly on purpose: this step runs against the base
+        # branch checkout, so it must not depend on a file that only exists in
+        # the PR (that is what broke the very first run of this pipeline).
+        run: pip install requests beautifulsoup4
 
       - name: Materialize the master baseline index (Git LFS)
         run: |
           # kolzchut_out/** is stored in Git LFS, so `git show` alone returns a
-          # pointer and the baseline would fail to parse — which silently
-          # disabled the anomalous-size check. Fetch just this one object and
-          # smudge it; the step fails loudly if the baseline is unavailable.
+          # pointer and a naive baseline compare would silently disable the
+          # anomalous-size check. Fetch just this object (an explicit failure
+          # here is the alarm) and prove it smudges to real JSON.
           git lfs fetch --include="kolzchut_out/index.json" origin master
           git show origin/master:kolzchut_out/index.json > kolzchut_baseline.pointer
           git lfs smudge < kolzchut_baseline.pointer > kolzchut_baseline_index.json
           python -c "import json; d = json.load(open('kolzchut_baseline_index.json', encoding='utf-8')); print(f'baseline pages: {len(d)}')"
 
+      - name: Stage the submitted archive as data (default archive path)
+        run: |
+          rsync -a --delete pr-archive/kolzchut_out/ kolzchut_out/
+          echo "staged pages: $(ls kolzchut_out/pages | wc -l)"
+
       - name: Verify archive integrity (trusted verifier + master baseline)
         run: |
           # Script from master, content from the PR, size baseline from master.
-          # --require-baseline guarantees the anomalous-size check cannot be
-          # silently skipped.
+          # kolzchut_verify.py resolves the LFS pointer itself (and must fail
+          # loudly when a requested baseline is unreadable).
           python kolzchut_verify.py \
-            --out kolzchut_out_verified/kolzchut_out \
-            --baseline-index kolzchut_baseline_index.json \
-            --require-baseline \
+            --out kolzchut_out \
+            --baseline origin/master \
             --allow-shrink 200 \
             --allow-grow 2000
 
@@ -85,9 +93,8 @@ jobs:
         run: |
           # The real filter (not a sample) runs here, on the GitHub side, before
           # any merge. A submitted archive that was not filtered locally changes
-          # under it and fails the PR. Config-independent and deterministic.
-          python kolzchut_remove_content.py --default-charedi-list \
-            --out kolzchut_out_verified/kolzchut_out
+          # under it and fails the PR. Deterministic and config-independent.
+          python kolzchut_remove_content.py --default-charedi-list
           python - <<'PY'
           import filecmp
           import json
@@ -95,7 +102,7 @@ jobs:
           from pathlib import Path
 
           submitted = Path("pr-archive/kolzchut_out")
-          filtered = Path("kolzchut_out_verified/kolzchut_out")
+          filtered = Path("kolzchut_out")
 
           sub_pages = {p.name for p in (submitted / "pages").glob("*.html")}
           flt_pages = {p.name for p in (filtered / "pages").glob("*.html")}
@@ -139,7 +146,7 @@ jobs:
           import sys
           from pathlib import Path
 
-          delta = Path("kolzchut_out_verified/kolzchut_out/delta.json")
+          delta = Path("kolzchut_out/delta.json")
           if not delta.exists():
               print("no delta.json — nothing to validate")
               sys.exit(0)
@@ -153,8 +160,7 @@ jobs:
                     file=sys.stderr)
               sys.exit(1)
 
-          idx = json.loads(Path("kolzchut_out_verified/kolzchut_out/index.json")
-                           .read_text(encoding="utf-8"))
+          idx = json.loads(Path("kolzchut_out/index.json").read_text(encoding="utf-8"))
           n = len(idx)
           pct = len(deleted) / max(n, 1) * 100
           if pct > 1.0:
@@ -169,17 +175,18 @@ jobs:
       - name: Publish the verification report to the job summary
         if: always()
         run: |
-          python kolzchut_verify.py \
-            --out kolzchut_out_verified/kolzchut_out \
-            --baseline-index kolzchut_baseline_index.json --require-baseline \
+          python kolzchut_verify.py --out kolzchut_out --baseline origin/master \
             > kolzchut_report.json || true
           python - <<'PY'
           import json
           import os
           from pathlib import Path
 
+          report = Path("kolzchut_report.json")
           try:
-              data = json.loads(Path("kolzchut_report.json").read_text(encoding="utf-8"))
+              text = report.read_text(encoding="utf-8")
+              start, end = text.find("{"), text.rfind("}")
+              data = json.loads(text[start:end + 1]) if start >= 0 else {}
           except (OSError, ValueError) as exc:
               print(f"(verification report unavailable: {exc})")
               raise SystemExit(0)
@@ -199,8 +206,8 @@ jobs:
               for e in errs[:3]:
                   lines.append(f"  - {e}")
           lines.append("")
-          lines.append("Filter/deletion guards ran separately in their own steps; "
-                       "a non-zero exit there blocks the merge.")
+          lines.append("Filter and deletion guards ran in their own steps; a non-zero "
+                       "exit there blocks the merge.")
 
           summary = os.environ.get("GITHUB_STEP_SUMMARY")
           text = "\n".join(lines) + "\n"

@@ -10,6 +10,10 @@ name: Auto-merge verified archive PR
 # הגנת אמון: אוטו-מיזוג חל על *שינויי תוכן בלבד* (kolzchut_out/**, docs/**).
 # PR שנוגע בסקריפטי האימות או ב-workflows לא ממוזג אוטומטית — אחרת אפשר היה
 # להחליף את סקריפט האימות ב-master ולעקוף את כל השער בפעם הבאה.
+#
+# זהו השער הקובע: עבור pull_request רץ קובץ ה-workflow **מה-PR** (בדקתי זאת
+# בפועל — ראו docs/DECISIONS.md), ולכן pr-check.yml לבדו אינו אמין. ה-workflow
+# הזה רץ מ-branch ברירת המחדל דרך workflow_run, ולכן PR אינו יכול לשנות אותו.
 
 on:
   workflow_run:
@@ -57,9 +61,31 @@ jobs:
           echo "number=$PR" >> "$GITHUB_OUTPUT"
           echo "resolved PR #$PR"
 
+      - name: Confirm the verified commit is still the PR head
+        id: freshness
+        if: steps.pr.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "workflow_run" ]; then
+            echo "manual dispatch — freshness check skipped"
+            echo "ok=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          PR="${{ steps.pr.outputs.number }}"
+          RUN_SHA="${{ github.event.workflow_run.head_sha }}"
+          PR_SHA=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
+                     --json headRefOid --jq .headRefOid)
+          if [ "$RUN_SHA" != "$PR_SHA" ]; then
+            echo "::notice::verify ran for $RUN_SHA but the PR head is $PR_SHA — waiting for the newer run"
+            exit 0
+          fi
+          echo "ok=1" >> "$GITHUB_OUTPUT"
+
       - name: Guard — only content-only PRs auto-merge
         id: guard
-        if: steps.pr.outputs.number != ''
+        if: steps.freshness.outputs.ok == '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
