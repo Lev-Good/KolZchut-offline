@@ -101,6 +101,10 @@ def run_sync_worker():
             bufsize=1
         )
 
+        import re
+        plan_re = re.compile(r"Download plan:\s+(\d+)\s+pages")
+        progress_re = re.compile(r"FETCH_PROGRESS\s+\[(\d+)/(\d+)\]\s+(.*?)\s+\(~?(\d+m\s+left)\)")
+
         for line in process.stdout:
             line = line.strip()
             if not line:
@@ -112,14 +116,28 @@ def run_sync_worker():
                     sync_state["log"].pop(0)
 
                 # Parse interesting status indicators
-                if "pages listed in sitemap" in line:
-                    sync_state["message"] = line
+                if "Fetching fresh NS0 sitemap" in line:
+                    sync_state["message"] = "מוריד ובודק את מפת האתר (Sitemap)..."
+                elif "pages listed in sitemap" in line:
+                    sync_state["message"] = "מפת האתר נטענה, משווה שינויים מול הארכיון המקומי..."
                 elif "Diff vs archive index:" in line:
-                    sync_state["message"] = "חושבו שינויים מול האתר המקומי"
-                elif line.startswith("   fetch ["):
-                    # e.g. fetch [1/12] Title
-                    sync_state["current_page"] = line
-                    sync_state["message"] = line
+                    sync_state["message"] = "מנתח שינויים (חדשים, עודכנו, נמחקו)..."
+                elif line.startswith("Download plan:"):
+                    m = plan_re.search(line)
+                    if m:
+                        total_p = int(m.group(1))
+                        sync_state["total"] = total_p
+                        sync_state["progress"] = 0
+                        sync_state["message"] = f"נמצאו {total_p} דפים לעדכון. מתחיל בהורדה..."
+                elif line.startswith("FETCH_PROGRESS"):
+                    m = progress_re.search(line)
+                    if m:
+                        curr, tot, page_title, time_left = m.groups()
+                        sync_state["progress"] = int(curr)
+                        sync_state["total"] = int(tot)
+                        sync_state["current_page"] = page_title
+                        pct = int((int(curr) / int(tot)) * 100) if int(tot) > 0 else 0
+                        sync_state["message"] = f"מוריד דף {curr} מתוך {tot} ({pct}%) — נותרו כ-{time_left}"
                 elif "Build portal" in line:
                     sync_state["message"] = "מעדכן את פורטל החיפוש המקומי..."
 

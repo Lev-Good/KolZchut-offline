@@ -93,7 +93,9 @@ def main():
   .sync-btn { background: #2a6dbd; color: white; border: none; padding: 0.55em 1.2em; border-radius: 6px; cursor: pointer; font-size: 0.95em; font-weight: bold; }
   .sync-btn:hover { background: #1f5699; }
   .sync-btn:disabled { background: #9bbfe8; cursor: not-allowed; }
-  .sync-log { background: #1e1e1e; color: #dcdcdc; border-radius: 6px; padding: 0.7em; font-family: Consolas, monospace; font-size: 0.85em; max-height: 120px; overflow-y: auto; direction: ltr; text-align: left; }
+  .sync-progress-wrap { width: 100%; background: #dce7f5; border-radius: 10px; height: 12px; overflow: hidden; margin-top: 0.4em; display: none; }
+  .sync-progress-bar { height: 100%; width: 0%; background: #2a6dbd; transition: width 0.3s ease; }
+  .sync-log { background: #1e1e1e; color: #dcdcdc; border-radius: 6px; padding: 0.7em; font-family: Consolas, monospace; font-size: 0.85em; max-height: 140px; overflow-y: auto; direction: ltr; text-align: left; }
   footer { margin-top: 3em; border-top: 1px solid #ddd; padding-top: .6em;
            font-size: .78em; color: #666; }
 </style>
@@ -105,9 +107,12 @@ def main():
 <!-- Sync Panel (Active when served via kolzchut_app.py) -->
 <div id="sync-panel" class="sync-panel" style="display: none;">
   <div class="sync-row">
-    <div>
+    <div style="flex: 1;">
       <strong>🔄 סנכרון ועדכון הארכיון מול אתר כל-זכות</strong>
       <div id="sync-status-msg" style="font-size: 0.85em; color: #555; margin-top: 0.2em;">בודק רק דפים חדשים שהתעדכנו באתר</div>
+      <div id="sync-progress-wrap" class="sync-progress-wrap">
+        <div id="sync-progress-bar" class="sync-progress-bar"></div>
+      </div>
     </div>
     <button id="sync-btn" class="sync-btn" onclick="startSync()">סנכרן עכשיו</button>
   </div>
@@ -242,15 +247,26 @@ function updateSyncUI(data) {
   const btn = document.getElementById('sync-btn');
   const msg = document.getElementById('sync-status-msg');
   const logBox = document.getElementById('sync-log-box');
+  const progWrap = document.getElementById('sync-progress-wrap');
+  const progBar = document.getElementById('sync-progress-bar');
 
   if (data.running) {
     btn.disabled = true;
     btn.innerText = 'מסנכרן...';
     msg.innerText = data.message || 'מעדכן דפים מול כל-זכות...';
     logBox.style.display = 'block';
+
+    if (data.total > 0) {
+      progWrap.style.display = 'block';
+      const pct = Math.min(100, Math.round((data.progress / data.total) * 100));
+      progBar.style.width = pct + '%';
+    } else {
+      progWrap.style.display = 'none';
+    }
   } else {
     btn.disabled = false;
     btn.innerText = 'סנכרן עכשיו';
+    progWrap.style.display = 'none';
     if (data.status === 'success') {
       msg.innerHTML = '<span style="color: #2e7d32; font-weight: bold;">✓ ' + data.message + ' (מרענן את הדף...)</span>';
     } else if (data.status === 'error') {
