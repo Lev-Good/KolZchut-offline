@@ -7,3 +7,6 @@ __pycache__/
 # כלי עבודה מקומיים / קבצים זמניים
 .freebuff/
 kolzchut_report.json
+*.idx
+*.zim_*
+*.zim.tmp
