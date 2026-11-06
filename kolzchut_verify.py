@@ -173,10 +173,14 @@ def check_internal_links(out: Path, index: dict, sample: int = 200):
             text = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for m in _re.finditer(r'href="pages/([^"#?]+)\.html', text):
+        for m in _re.finditer(r'href="([^"#?]+?\.html)(#[^"]*)?"', text):
+            target = m.group(1)
+            if target in ("../index.html", "index.html"):
+                continue
+            if target.startswith("pages/"):
+                target = target[len("pages/"):]
             total += 1
-            target = m.group(1) + ".html"
-            target_base = m.group(1).rsplit("__", 1)[0]
+            target_base = target[:-5].rsplit("__", 1)[0]
             if not ((out / "pages" / target).exists()
                     or target in known
                     or (target_base and target_base in known_bases)):
