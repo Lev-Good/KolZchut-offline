@@ -156,18 +156,18 @@ def main():
     log_action = lambda *a, **k: print(*a, **k)
 
     # ---------------- 1. Fetch fresh sitemap (full current state)
-    print("1) Fetching fresh NS0 sitemap ...")
+    print("1) Fetching fresh NS0 sitemap ...", flush=True)
     try:
         sitemap = dl.fetch_sitemap_pages()   # {title: lastmod}
     except RuntimeError as exc:
-        print(f"  !! sitemap fetch failed: {exc}", file=sys.stderr)
+        print(f"  !! sitemap fetch failed: {exc}", file=sys.stderr, flush=True)
         append_sync_log({"time": run_id, "phase": "sitemap-fetch", "status": "error",
                          "detail": str(exc)})
         if not args.check:
-            print("  -> Keeping last_sync.txt unchanged (no data loss possible).")
+            print("  -> Keeping last_sync.txt unchanged (no data loss possible).", flush=True)
         return 2
 
-    print(f"   -> {len(sitemap)} pages listed in sitemap")
+    print(f"   -> {len(sitemap)} pages listed in sitemap", flush=True)
     if len(sitemap) < 1000:
         # sitemap too short -> probably a bad/empty response; refuse to act on it
         print(f"  !! sitemap suspiciously small ({len(sitemap)} pages); aborting to avoid mass deletion", file=sys.stderr)
@@ -216,8 +216,8 @@ def main():
         local = {t: local_lastmod(meta) for t, meta in index.items()}
     changed_titles = [t for t in sitemap if t in local and sitemap_time_to_epoch(sitemap[t]) > local[t]]
 
-    print(f"2) Diff vs archive index:")
-    print(f"   new: {len(new_titles)} | changed: {len(changed_titles)} | deleted: {len(deleted_titles)}")
+    print(f"2) Diff vs archive index:", flush=True)
+    print(f"   new: {len(new_titles)} | changed: {len(changed_titles)} | deleted: {len(deleted_titles)}", flush=True)
 
     if args.check:
         print("(dry run – writing nothing)")
@@ -303,7 +303,7 @@ def main():
         if t not in seen:
             seen.add(t); plan.append(t)
 
-    print(f"3) Download plan: {len(plan)} pages (retries={len(retry_q) if retry_q else 0})")
+    print(f"3) Download plan: {len(plan)} pages (retries={len(retry_q) if retry_q else 0})", flush=True)
 
     # ---------------- 5. Download loop with failures logged, last_sync gated
     done = failed_titles = 0
@@ -311,16 +311,18 @@ def main():
     t0 = time.time()
     new_failed: list[str] = []
     for i, title in enumerate(plan, 1):
+        rate = done / max(time.time() - t0, 1)
+        rem = (len(plan) - i) / max(rate, 0.001) / 60 if done > 0 else (len(plan) - i) * 5.0 / 60
+        # Print progress line for each page (unbuffered so app UI gets live updates)
+        print(f"FETCH_PROGRESS [{i}/{len(plan)}] {title} (~{rem:.0f}m left)", flush=True)
         ok = fetch_and_write(title, title_to_file)
         if ok:
             done += 1
         else:
             failed_titles += 1
             new_failed.append(title)
-        if i % 20 == 0 or i == len(plan):
-            rate = done / max(time.time() - t0, 1)
-            rem = (len(plan) - i) / max(rate, 0.001) / 60
-            print(f"   [{i}/{len(plan)}] ok={done} fail={failed_titles} ({rate:.2f} pages/s, ~{rem:.0f}m left)")
+        if i % 10 == 0 or i == len(plan):
+            print(f"   [{i}/{len(plan)}] ok={done} fail={failed_titles} ({rate:.2f} pages/s, ~{rem:.0f}m left)", flush=True)
 
     # pages in retry queue that we did NOT plan this run (shouldn't happen now, be safe)
     unresolved_old = [it["title"] for it in retry_q if it["title"] not in plan]

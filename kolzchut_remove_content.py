@@ -17,6 +17,11 @@ Usage examples:
   python kolzchut_remove_content.py --remove-pages "טקסט פוגעני" --blank-pages "דף רגיש"
   python kolzchut_remove_content.py --remove-words "הזכרת שם מושחת"
   python kolzchut_remove_content.py --default-charedi-list
+  python kolzchut_remove_content.py --default-charedi-list --out kolzchut_out_verified/kolzchut_out
+
+--out exists so CI can run the *real* filter against the submitted archive copy
+(see .github/workflows/pr-check.yml): the filter must be a no-op there, which
+proves the contributor applied it before submitting.
 """
 
 import argparse
@@ -25,18 +30,16 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 
-OUT = Path("kolzchut_out")
-PAGES = OUT / "pages"
-INDEX_FILE = OUT / "index.json"
-REMOVED_LOG = OUT / "removed_log.json"
+OUT_DEFAULT = Path("kolzchut_out")
 
 
-def load_index():
-    return json.loads(INDEX_FILE.read_text(encoding="utf-8"))
+def load_index(out: Path):
+    return json.loads((out / "index.json").read_text(encoding="utf-8"))
 
 
-def save_index(index):
-    INDEX_FILE.write_text(json.dumps(index, ensure_ascii=False, indent=1), encoding="utf-8")
+def save_index(index, out: Path):
+    (out / "index.json").write_text(json.dumps(index, ensure_ascii=False, indent=1),
+                                    encoding="utf-8")
 
 
 def page_text_contains(soup, keyword: str) -> bool:
@@ -70,12 +73,19 @@ def main():
     parser.add_argument("--remove-words", nargs="*", default=[], metavar="KEYWORD")
     parser.add_argument("--default-charedi-list", action="store_true",
                         help="apply the built-in sensitive-content list")
+    parser.add_argument("--out", default=str(OUT_DEFAULT),
+                        help="archive directory to operate on (default kolzchut_out)")
     args = parser.parse_args()
 
-    if not INDEX_FILE.exists():
-        raise SystemExit("index.json not found - run downloader first")
+    out = Path(args.out)
+    index_file = out / "index.json"
+    pages_dir = out / "pages"
+    removed_log_file = out / "removed_log.json"
 
-    index = load_index()
+    if not index_file.exists():
+        raise SystemExit(f"{index_file} not found - run downloader first")
+
+    index = load_index(out)
     title_to_slug = {t: m.get("slug", "") for t, m in index.items()}
 
     log = {"removed_pages": [], "blanked_pages": [], "keyword_hits": {}}
@@ -87,13 +97,13 @@ def main():
             if not slug:
                 print(f"  ! not in index: {title}")
                 continue
-            p = PAGES / slug
+            p = pages_dir / slug
             if not p.exists():
                 continue
             if mode == "remove":
                 p.unlink()
                 index.pop(title, None)
-                list(log["removed_pages"]).append(title) if False else log["removed_pages"].append(title)
+                log["removed_pages"].append(title)
             else:
                 html_text = p.read_text(encoding="utf-8")
                 soup = BeautifulSoup(html_text, "html.parser")
@@ -121,7 +131,7 @@ def main():
             slug = meta.get("slug", "")
             if not slug:
                 continue
-            p = PAGES / slug
+            p = pages_dir / slug
             if not p.exists():
                 continue
             soup = BeautifulSoup(p.read_text(encoding="utf-8"), "html.parser")
@@ -147,9 +157,10 @@ def main():
                 log["keyword_hits"][title] = {"keywords": hits, "paragraphs_removed": para_removed}
                 print(f"  scrubbed {para_removed} paragraphs in: {title} (hits: {hits})")
 
-    save_index(index)
-    REMOVED_LOG.write_text(json.dumps(log, ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"Log: {REMOVED_LOG}  |  removed={len(log['removed_pages'])} "
+    save_index(index, out)
+    removed_log_file.write_text(json.dumps(log, ensure_ascii=False, indent=1),
+                                encoding="utf-8")
+    print(f"Log: {removed_log_file}  |  removed={len(log['removed_pages'])} "
           f"blanked={len(log['blanked_pages'])} pages_scrubbed={len(log['keyword_hits'])}")
 
 

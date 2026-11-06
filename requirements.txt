@@ -1,0 +1,8 @@
+# Runtime dependencies for the KolZchut offline archive tooling.
+# Used by CI (.github/workflows/pr-check.yml, daily-sync.yml) and by local
+# contributors (kolzchut_download.py / kolzchut_sync_delta.py / kolzchut_verify.py).
+#
+#   pip install -r requirements.txt
+
+requests>=2.31,<3
+beautifulsoup4>=4.12,<5

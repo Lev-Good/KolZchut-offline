@@ -1,0 +1,68 @@
+name: Gate regression suite (master)
+
+# למה זה קיים בנפרד מ-pr-check:
+#   אירועי pull_request מריצים את קובץ ה-workflow **מה-PR**, ו-auto-merge מסרב
+#   למזג כל PR שנוגע מחוץ ל-kolzchut_out/** ו-docs/** — כלומר שינויי תשתית
+#   (workflows, סקריפטי השער, החבילה הזו) נבדקים ב-pr-check מול סקריפטי ה-BASE,
+#   ורק אחרי מיזוג ידני הם קיימים על master בפועל.
+#   כאן, לעומת זאת, הכל נלקח מ-master עצמו — קוד, workflows וחבילת הבדיקות —
+#   ולכן זו הנקודה שבה שינוי תשתית נבדק בקוד האמיתי שלו, ולא בגרסה של הבסיס.
+#
+# ההרצה יזומה (workflow_dispatch) מאפשרת לבדוק ידנית ענף או commit בלי לחכות
+# לשינוי נוסף על master.
+#
+# הערה: ה-checkout ללא LFS (חוסך רוחב פס). לכן בדיקת "הארכיון שבריפו מאומת"
+# מדלגת כאן במפורש (קובץ pointer ≠ תוכן); היא רצה במלואה ב-pr-check אחרי
+# staging של התוכן, ובהרצה מקומית אחרי `git lfs pull`.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "kolzchut_verify.py"
+      - "kolzchut_remove_content.py"
+      - ".github/workflows/pr-check.yml"
+      - ".github/workflows/auto-merge.yml"
+      - ".github/workflows/gate-tests.yml"
+      - "tests/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kolzchut-gate-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out master (gate scripts, workflows and the suite)
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          lfs: false
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install requests beautifulsoup4
+
+      - name: Run the gate regression suite
+        run: |
+          # Explicit exit-status handling (not the runner's implicit `bash -e`):
+          # `tee` exits 0 even when the suite fails, so an implicit-status
+          # version would look green for a red suite.
+          set -o pipefail
+          status=0
+          python -m unittest discover -s tests -v 2>&1 | tee /tmp/gate-tests.log \
+            || status=$?
+          grep -Eq "Ran [1-9][0-9]* tests?" /tmp/gate-tests.log \
+            || { echo "::error::the gate suite collected zero tests"; exit 1; }
+          exit "$status"

@@ -167,8 +167,8 @@ def clean_page_html(raw_html: str, title_to_file: dict):
                               "style", "script", "noscript"]):
         tag.decompose()
 
-    # Remove editing section links and other chrome.
-    for sel in ["span.mw-editsection", "div.catlinks", "div.mw-references-wrap"]:
+    # Remove editing section links, Google preference box, and other chrome.
+    for sel in ["span.mw-editsection", "div.catlinks", "div.mw-references-wrap", "div.kz-preferred-source"]:
         for tag in soup.select(sel):
             tag.decompose()
 
@@ -185,10 +185,12 @@ def clean_page_html(raw_html: str, title_to_file: dict):
             if "#" in target:
                 target, frag = target.split("#", 1)
             frag = f"#{frag}" if frag else ""
+            # Normalize target: mediawiki uses underscores in URLs, index uses spaces
+            target_title = target.replace("_", " ")
             # Known pages map to their file; unknown (red links / other wiki-
             # namespace pages) map by hash too, so the link simply 404s locally.
-            fname = title_to_file.get(target) or make_filename(target)
-            a["href"] = f"pages/{fname}{frag}"
+            fname = title_to_file.get(target_title) or title_to_file.get(target) or make_filename(target_title)
+            a["href"] = f"{fname}{frag}"
         elif href.startswith("/w/he/index.php"):
             # Special pages / oldid links -> strip to plain text (keep visible label)
             a.unwrap()
@@ -214,14 +216,21 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   body {{ font-family: "Segoe UI", "Arial", sans-serif; line-height: 1.65;
          max-width: 48em; margin: 0 auto; padding: 1.5em; color: #222; }}
   h1 {{ font-size: 1.6em; border-bottom: 2px solid #2a6dbd; padding-bottom: .25em; }}
-  a {{ color: #2a6dbd; }}
+  a {{ color: #2a6dbd; text-decoration: none; }}
+  a:hover {{ text-decoration: underline; }}
+  /* External links */
+  a[href^="http://"]::after, a[href^="https://"]::after {{
+    content: " ↗";
+    font-size: 0.8em;
+    opacity: 0.7;
+  }}
   .topnav {{ font-size: .85em; margin-bottom: 1em; }}
   .credit {{ font-size: .78em; color: #666; border-top: 1px solid #ddd;
             margin-top: 2.5em; padding-top: .5em; }}
 </style>
 </head>
 <body>
-<div class="topnav"><a href="index.html">→ חזרה לאינדקס</a></div>
+<div class="topnav"><a href="../index.html">→ חזרה לאינדקס</a></div>
 <h1>{title}</h1>
 {body}
 <p class="credit">מקור: דף “{title}” באתר כל זכות (kolzchut.org.il), אוחזר ב־11.10.2026,
