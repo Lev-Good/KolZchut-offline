@@ -125,7 +125,6 @@ class KolZchutHTTPHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         elif url.path == "/api/start-sync":
-            global sync_state
             with sync_lock:
                 if sync_state["running"]:
                     resp = {"status": "already_running", "message": "סנכרון כבר רץ ברקע"}

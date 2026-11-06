@@ -1,20 +1,22 @@
 @echo off
-chcp 65001 >nul
-title כל-זכות אופליין
+cd /d "%~dp0"
+title KolZchut Offline
 echo ======================================================
-echo    מפעיל את ארכיון כל-זכות אופליין וממשק הסנכרון...
+echo    Starting KolZchut Offline Server...
 echo ======================================================
 echo.
-
-python --version >nul 2>&1
+where python >nul 2>nul
 if %errorlevel% neq 0 (
-    echo [שגיאה] לא נמצא Python מותקן במחשב!
-    echo נא להתקין Python מ-https://www.python.org/downloads/
-    echo ולוודא שמסומנת האפשרות "Add Python to PATH".
+    echo [ERROR] Python was not found on your system!
+    echo Please install Python from https://www.python.org/downloads/
+    echo and make sure to check 'Add Python to PATH'.
     echo.
     pause
-    exit /b
+    exit /b 1
 )
-
 python kolzchut_app.py
-pause
+if %errorlevel% neq 0 (
+    echo.
+    echo [ERROR] Server stopped unexpectedly.
+    pause
+)
