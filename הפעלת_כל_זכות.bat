@@ -14,6 +14,12 @@ if %errorlevel% neq 0 (
     pause
     exit /b 1
 )
+python -c "import requests, bs4" >nul 2>nul
+if %errorlevel% neq 0 (
+    echo Installing required packages (requests, beautifulsoup4)...
+    python -m pip install -r requirements.txt
+    echo.
+)
 python kolzchut_app.py
 if %errorlevel% neq 0 (
     echo.

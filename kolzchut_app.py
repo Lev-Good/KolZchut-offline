@@ -35,6 +35,41 @@ sync_state = {
 sync_lock = threading.Lock()
 
 
+def ensure_dependencies():
+    """Ensure required packages (requests, beautifulsoup4) are installed."""
+    missing = []
+    try:
+        import requests
+    except ImportError:
+        missing.append("requests")
+    try:
+        import bs4
+    except ImportError:
+        missing.append("beautifulsoup4")
+
+    if missing:
+        with sync_lock:
+            sync_state["log"].append(f"מתקין רכיבים נדרשים לפייתון ({', '.join(missing)})...")
+            sync_state["message"] = "מתקין רכיבים נדרשים ברקע..."
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", *missing],
+                cwd=str(BASE_DIR),
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT
+            )
+            with sync_lock:
+                sync_state["log"].append("התקנת הרכיבים הושלמה בהצלחה!")
+            return True
+        except Exception as e:
+            with sync_lock:
+                sync_state["log"].append(f"שגיאה בהתקנת רכיבים: {e}")
+                sync_state["message"] = f"שגיאה בהתקנת רכיבים: {e}"
+            return False
+    return True
+
+
 def run_sync_worker():
     global sync_state
     with sync_lock:
@@ -45,6 +80,13 @@ def run_sync_worker():
         sync_state["total"] = 0
         sync_state["current_page"] = ""
         sync_state["log"] = ["התחלת תהליך סנכרון..."]
+
+    if not ensure_dependencies():
+        with sync_lock:
+            sync_state["running"] = False
+            sync_state["status"] = "error"
+            sync_state["log"].append("סיום סנכרון עקב חוסר ברכיבים.")
+        return
 
     try:
         cmd = [sys.executable, str(BASE_DIR / "kolzchut_sync_delta.py")]
